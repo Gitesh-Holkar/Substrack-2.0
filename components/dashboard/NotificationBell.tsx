@@ -22,6 +22,7 @@ export function NotificationBell() {
   const [isOpen, setIsOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const dropdownRef = useRef<HTMLDivElement>(null)
+
   const supabase = createClient()
 
   useEffect(() => {
@@ -49,6 +50,7 @@ export function NotificationBell() {
         supabase.removeChannel(channel)
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
   useEffect(() => {
@@ -128,58 +130,65 @@ export function NotificationBell() {
       const allNotifications: Notification[] = []
 
       // New subscribers
-      subscribers?.forEach((sub) => {
+      subscribers?.forEach((sub: any) => {
         const isNew = new Date(sub.created_at).getTime() > new Date(sub.updated_at).getTime() - 60000 // Within 1 min
+        const planName = sub.subscription_plans?.name || 'Unknown Plan'
+        
         if (isNew && sub.status === 'active') {
           allNotifications.push({
             id: `new-${sub.id}`,
             type: 'new_subscriber',
-            message: `${sub.customer_name} subscribed to ${(sub.subscription_plans as { name: string })?.name}`,
+            message: `${sub.customer_name} subscribed to ${planName}`,
             timestamp: sub.created_at,
             read: false,
             customer_name: sub.customer_name,
-            plan_name: (sub.subscription_plans as { name: string })?.name,
+            plan_name: planName,
           })
         } else if (sub.status === 'cancelled') {
           allNotifications.push({
             id: `cancel-${sub.id}`,
             type: 'cancellation',
-            message: `${sub.customer_name} cancelled their ${(sub.subscription_plans as { name: string })?.name} subscription`,
+            message: `${sub.customer_name} cancelled their ${planName} subscription`,
             timestamp: sub.updated_at,
             read: false,
             customer_name: sub.customer_name,
-            plan_name: (sub.subscription_plans as { name: string })?.name,
+            plan_name: planName,
           })
         }
       })
 
       // Failed payments
-      failedPayments?.forEach((payment) => {
+      failedPayments?.forEach((payment: any) => {
+        const customerName = payment.subscribers?.customer_name || 'Unknown Customer'
+        const planName = payment.subscription_plans?.name || 'Unknown Plan'
+        
         allNotifications.push({
           id: `failed-${payment.id}`,
           type: 'failed_payment',
-          message: `Payment of ₹${payment.amount.toFixed(2)} failed for ${(payment.subscribers as { customer_name: string })?.customer_name}`,
+          message: `Payment of ₹${payment.amount.toFixed(2)} failed for ${customerName}`,
           timestamp: payment.payment_date,
           read: false,
-          customer_name: (payment.subscribers as { customer_name: string })?.customer_name,
-          plan_name: (payment.subscription_plans as { name: string })?.name,
+          customer_name: customerName,
+          plan_name: planName,
           amount: payment.amount,
         })
       })
 
       // Upcoming renewals
-      upcomingRenewals?.forEach((renewal) => {
+      upcomingRenewals?.forEach((renewal: any) => {
+        const planName = renewal.subscription_plans?.name || 'Unknown Plan'
         const daysUntil = Math.ceil(
           (new Date(renewal.next_renewal_date!).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
         )
+        
         allNotifications.push({
           id: `renewal-${renewal.id}`,
           type: 'upcoming_renewal',
-          message: `${renewal.customer_name}'s ${(renewal.subscription_plans as { name: string })?.name} renews in ${daysUntil} day${daysUntil !== 1 ? 's' : ''}`,
+          message: `${renewal.customer_name}'s ${planName} renews in ${daysUntil} day${daysUntil !== 1 ? 's' : ''}`,
           timestamp: renewal.next_renewal_date!,
           read: false,
           customer_name: renewal.customer_name,
-          plan_name: (renewal.subscription_plans as { name: string })?.name,
+          plan_name: planName,
         })
       })
 
@@ -284,7 +293,7 @@ export function NotificationBell() {
                     )}`}
                   >
                     <div className="flex items-start space-x-3">
-                      <span className="text-2xl flex-shrink-0">
+                      <span className="text-2xl shrink-0">
                         {getNotificationIcon(notification.type)}
                       </span>
                       <div className="flex-1 min-w-0">

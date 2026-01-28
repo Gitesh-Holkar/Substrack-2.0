@@ -1,4 +1,3 @@
-// app/(dashboard)/settings/page.tsx - PRODUCTION READY (ALL ERRORS FIXED)
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
