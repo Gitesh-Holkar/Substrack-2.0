@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Menu } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
+import { NotificationBell } from './NotificationBell'
 
 export function Header() {
   const [dropdownOpen, setDropdownOpen] = useState(false)
@@ -40,6 +41,10 @@ export function Header() {
       </div>
       
       <div className="flex items-center space-x-4">
+        {/* Notification Bell */}
+        <NotificationBell />
+        
+        {/* Profile Dropdown */}
         <div className="relative">
           <button
             onClick={() => setDropdownOpen(!dropdownOpen)}
