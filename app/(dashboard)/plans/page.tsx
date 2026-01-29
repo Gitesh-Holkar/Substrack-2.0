@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
 import { Plus, Check, Edit2, PauseCircle, ExternalLink } from 'lucide-react'
+import { StripeService } from '@/services/stripeService'
 
 // Extended type to include active subscriber count
 interface PlanWithActiveCount {
@@ -48,6 +49,7 @@ export default function PlansPage() {
     if (user) {
       loadPlans()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
   const loadPlans = async () => {
@@ -94,8 +96,6 @@ export default function PlansPage() {
     } catch (error) {
       console.error('Error loading plans:', error)
       setPlans([])
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -115,13 +115,32 @@ export default function PlansPage() {
         is_active: true,
       }
 
-      const { error } = await supabase
+      // Create new plan in Supabase
+      const { data: newPlan, error } = await supabase
         .from('subscription_plans')
         .insert(planData)
         .select()
         .single()
 
       if (error) throw error
+
+      // Sync to Stripe if API keys are configured
+      if (merchant?.stripe_api_key && newPlan) {
+        try {
+          const stripeService = new StripeService()
+          await stripeService.syncPlanToStripe(
+            newPlan.id,
+            formData.name,
+            formData.description,
+            parseFloat(formData.price),
+            'INR',
+            formData.billing_cycle
+          )
+        } catch (stripeError) {
+          console.error('Failed to create plan in Stripe:', stripeError)
+          alert('Plan created locally, but failed to sync with Stripe. Please check your Stripe keys in Settings.')
+        }
+      }
 
       setShowModal(false)
       resetForm()
