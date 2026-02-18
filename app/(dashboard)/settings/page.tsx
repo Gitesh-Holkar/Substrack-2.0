@@ -110,7 +110,7 @@ export default function Settings() {
         business_name: merchant.business_name || '',
         email: merchant.email || '',
         phone: (merchant as { phone?: string }).phone || '',
-        business_address: merchant.bank_account || '',
+        business_address: (merchant as { business_address?: string }).business_address || '',
         gst_number: merchant.gst_number || '',
         logo_url: merchant.logo_url || '',
       })
@@ -187,7 +187,7 @@ export default function Settings() {
           full_name: businessInfo.full_name,
           business_name: businessInfo.business_name,
           phone: businessInfo.phone,
-          bank_account: businessInfo.business_address,
+          business_address: businessInfo.business_address,
           gst_number: businessInfo.gst_number,
           logo_url: logoUrl,
         })

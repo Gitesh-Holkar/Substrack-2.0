@@ -159,7 +159,7 @@ export default function PaymentsPage() {
       // Fetch merchant details from Supabase
       const { data: merchantData, error: merchantError } = await supabase
         .from('merchants')
-        .select('business_name, email, phone, bank_account, gst_number, logo_url')
+        .select('business_name, email, phone, business_address, gst_number, logo_url')
         .eq('id', user!.id)
         .single()
 
@@ -176,7 +176,7 @@ export default function PaymentsPage() {
         // Merchant Info - use fetched data or defaults
         merchantName: merchantData?.business_name || 'Your Business Name',
         merchantEmail: merchantData?.email || user?.email || 'contact@yourbusiness.com',
-        merchantAddress: merchantData?.bank_account || undefined,
+        merchantAddress: (merchantData as { business_address?: string } | null)?.business_address || undefined,
         merchantGST: merchantData?.gst_number || undefined,
         merchantPhone: merchantData?.phone || undefined,
         merchantLogo: merchantData?.logo_url || undefined,

@@ -1,118 +1,151 @@
 'use client'
 
-import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-import { Loader2, Check, XCircle } from 'lucide-react';
+import { useEffect, useState } from 'react'
+import { useParams } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
+import { Loader2, Check, XCircle } from 'lucide-react'
+
+// Only safe, public-facing columns from merchants.
+// stripe_api_key, stripe_publishable_key, stripe_webhook_secret,
+interface PublicMerchant {
+  id: string
+  business_name: string
+  email: string
+  logo_url: string | null
+  redirect_url: string | null
+}
+
+interface PublicPlan {
+  id: string
+  merchant_id: string
+  name: string
+  description: string | null
+  price: number
+  currency: string
+  billing_cycle: string
+  features: string[]
+  is_active: boolean
+  stripe_price_id: string | null
+  merchants: PublicMerchant
+}
 
 export default function SubscribePage() {
-  const params = useParams();
-  const planId = params.planId as string;
-  
-  const [plan, setPlan] = useState<any>(null);
-  const [merchant, setMerchant] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [processing, setProcessing] = useState(false);
-  const [error, setError] = useState('');
-  const [customerName, setCustomerName] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
-  const [planInactive, setPlanInactive] = useState(false);
+  const params = useParams()
+  const planId = params.planId as string
 
-  const supabase = createClient();
+  const [plan, setPlan] = useState<PublicPlan | null>(null)
+  const [merchant, setMerchant] = useState<PublicMerchant | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [processing, setProcessing] = useState(false)
+  const [error, setError] = useState('')
+  const [customerName, setCustomerName] = useState('')
+  const [customerEmail, setCustomerEmail] = useState('')
+  const [planInactive, setPlanInactive] = useState(false)
+
+  const supabase = createClient()
 
   useEffect(() => {
-    loadPlanDetails();
+    loadPlanDetails()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planId]);
+  }, [planId])
 
-  const loadPlanDetails = async () => {
+  const loadPlanDetails = async (): Promise<void> => {
     try {
+      // Explicit column selection — never use select('*') on a public page.
+      // merchants join: only business_name, email, logo_url, redirect_url.
+      // Stripe keys, bank details, and webhook secrets are never fetched here.
       const { data: planData, error: planError } = await supabase
         .from('subscription_plans')
-        .select('*, merchants(*)')
+        .select(`
+          id,
+          merchant_id,
+          name,
+          description,
+          price,
+          currency,
+          billing_cycle,
+          features,
+          is_active,
+          stripe_price_id,
+          merchants (
+            id,
+            business_name,
+            email,
+            logo_url,
+            redirect_url
+          )
+        `)
         .eq('id', planId)
-        .single();
+        .single()
 
-      if (planError) throw planError;
+      if (planError) throw planError
       if (!planData) {
-        setError('Plan not found');
-        return;
+        setError('Plan not found')
+        return
       }
 
-      console.log('✅ Plan loaded:', planData);
-      setPlan(planData);
-      setMerchant((planData as any).merchants);
+      const typedPlan = planData as unknown as PublicPlan
+      setPlan(typedPlan)
+      setMerchant(typedPlan.merchants)
 
-      if (!planData.is_active) {
-        setPlanInactive(true);
+      if (!typedPlan.is_active) {
+        setPlanInactive(true)
       }
-    } catch (err: any) {
-      console.error('Error loading plan:', err);
-      setError('Failed to load plan details');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to load plan details'
+      setError(message)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
-  const handleSubscribe = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const handleSubscribe = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault()
+
     if (!plan?.stripe_price_id) {
-      setError('Plan is not configured for payments. Please contact support.');
-      return;
+      setError('Plan is not configured for payments. Please contact support.')
+      return
     }
 
-    if (!merchant?.stripe_publishable_key) {
-      setError('Merchant payment system is not configured. Please contact support.');
-      return;
-    }
+    // We do NOT check stripe_publishable_key here — that key must never
+    // land in the browser. The create-checkout Edge Function validates
+    // Stripe config server-side using the service_role key.
 
-    setProcessing(true);
-    setError('');
+    setProcessing(true)
+    setError('')
 
     try {
-      console.log('🚀 Creating checkout with:', {
-        priceId: plan.stripe_price_id,
-        customerEmail,
-        customerName,
-        planId: plan.id,
-        merchantId: merchant.id,
-      });
-
       const { data, error: checkoutError } = await supabase.functions.invoke('create-checkout', {
         body: {
           priceId: plan.stripe_price_id,
           customerEmail,
           customerName,
           planId: plan.id,
-          merchantId: merchant.id,
+          merchantId: plan.merchant_id,
         },
-      });
+      })
 
-      if (checkoutError) {
-        console.error('❌ Checkout error:', checkoutError);
-        throw checkoutError;
-      }
+      if (checkoutError) throw checkoutError
 
       if (!data?.url) {
-        throw new Error('No checkout URL returned from server');
+        throw new Error('No checkout URL returned from server')
       }
 
-      console.log('✅ Checkout URL received:', data.url);
-      window.location.href = data.url;
-    } catch (err: any) {
-      console.error('💥 Error creating checkout:', err);
-      setError(err.message || 'Failed to initiate payment. Please try again.');
-      setProcessing(false);
+      window.location.href = data.url as string
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to initiate payment. Please try again.'
+      setError(message)
+      setProcessing(false)
     }
-  };
+  }
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
       </div>
-    );
+    )
   }
 
   if (error && !plan) {
@@ -124,10 +157,10 @@ export default function SubscribePage() {
           <p className="text-gray-600">{error}</p>
         </div>
       </div>
-    );
+    )
   }
 
-  if (planInactive) {
+  if (planInactive && plan) {
     return (
       <div className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100 py-12 px-4">
         <div className="max-w-2xl mx-auto">
@@ -149,10 +182,12 @@ export default function SubscribePage() {
             </div>
 
             <p className="text-lg text-gray-600 mb-4">
-              This subscription plan is currently paused by {merchant?.business_name || 'the merchant'}.
+              This subscription plan is currently paused by{' '}
+              {merchant?.business_name || 'the merchant'}.
             </p>
             <p className="text-gray-500 mb-8">
-              New subscriptions are temporarily unavailable. Please check back later or contact support for more information.
+              New subscriptions are temporarily unavailable. Please check back later or contact
+              support for more information.
             </p>
 
             {merchant?.email && (
@@ -186,8 +221,10 @@ export default function SubscribePage() {
           </div>
         </div>
       </div>
-    );
+    )
   }
+
+  if (!plan) return null
 
   return (
     <div className="min-h-screen bg-linear-to-br from-blue-50 to-indigo-100 py-12 px-4">
@@ -200,13 +237,16 @@ export default function SubscribePage() {
         </div>
 
         <div className="grid md:grid-cols-2 gap-8">
+          {/* Plan Details */}
           <div className="bg-white rounded-xl shadow-lg p-8">
             <h2 className="text-2xl font-bold text-gray-800 mb-2">{plan.name}</h2>
             <p className="text-4xl font-bold text-blue-600 mb-4">
               ₹{plan.price}
               <span className="text-lg font-normal text-gray-500"> per {plan.billing_cycle}</span>
             </p>
-            <p className="text-gray-600 mb-6">{plan.description}</p>
+            {plan.description && (
+              <p className="text-gray-600 mb-6">{plan.description}</p>
+            )}
 
             <div className="border-t pt-6">
               <h3 className="font-semibold text-gray-800 mb-4">What is included:</h3>
@@ -221,6 +261,7 @@ export default function SubscribePage() {
             </div>
           </div>
 
+          {/* Checkout Form */}
           <div className="bg-white rounded-xl shadow-lg p-8">
             <h2 className="text-2xl font-bold text-gray-800 mb-6">Complete Your Subscription</h2>
 
@@ -329,5 +370,5 @@ export default function SubscribePage() {
         </div>
       </div>
     </div>
-  );
+  )
 }
