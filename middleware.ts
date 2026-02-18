@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest): Promise<NextResponse> {
   let response = NextResponse.next({
     request: {
       headers: request.headers,
@@ -17,7 +17,7 @@ export async function middleware(request: NextRequest) {
           return request.cookies.getAll()
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
+          cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           )
           response = NextResponse.next({
@@ -32,10 +32,13 @@ export async function middleware(request: NextRequest) {
   )
 
   const {
-    data: { session },
-  } = await supabase.auth.getSession()
+    data: { user },
+    error,
+  } = await supabase.auth.getUser()
 
-  // Protected routes - redirect to login if not authenticated
+  const isAuthenticated = !!user && !error
+
+  // Protected routes — redirect to login if not authenticated
   if (
     request.nextUrl.pathname.startsWith('/dashboard') ||
     request.nextUrl.pathname.startsWith('/plans') ||
@@ -44,17 +47,17 @@ export async function middleware(request: NextRequest) {
     request.nextUrl.pathname.startsWith('/settings') ||
     request.nextUrl.pathname.startsWith('/contact')
   ) {
-    if (!session) {
+    if (!isAuthenticated) {
       return NextResponse.redirect(new URL('/login', request.url))
     }
   }
 
-  // Redirect logged-in users away from auth pages
+  // Redirect authenticated users away from auth pages
   if (
     request.nextUrl.pathname.startsWith('/login') ||
     request.nextUrl.pathname.startsWith('/signup')
   ) {
-    if (session) {
+    if (isAuthenticated) {
       return NextResponse.redirect(new URL('/dashboard', request.url))
     }
   }
