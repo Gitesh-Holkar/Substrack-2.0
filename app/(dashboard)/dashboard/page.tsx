@@ -613,7 +613,7 @@ export default function DashboardPage() {
           <button
             onClick={() => setDateRange('7d')}
             className={`px-3 py-1.5 text-sm rounded-lg ${
-              dateRange === '7d' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 border'
+              dateRange === '7d' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 border '
             }`}
           >
             7 Days

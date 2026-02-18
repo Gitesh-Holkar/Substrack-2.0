@@ -1,14 +1,24 @@
 'use client'
 
+import { useSelectedLayoutSegment } from 'next/navigation'
 import { useState } from 'react'
 import { Menu } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 import { NotificationBell } from './NotificationBell'
 
+function toTitleCase(text: string) {
+  return text
+    .replace(/-/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase())
+}
+
+
 export function Header() {
+  const segment = useSelectedLayoutSegment()
+  const title = segment ? toTitleCase(segment) : 'Dashboard'
   const [dropdownOpen, setDropdownOpen] = useState(false)
-  const { merchant, user } = useAuth()
+  const { merchant } = useAuth()
   const router = useRouter()
 
   const handleSignOut = async () => {
@@ -37,7 +47,7 @@ export function Header() {
         <button className="md:hidden text-gray-500 focus:outline-none">
           <Menu className="h-6 w-6" />
         </button>
-        <h1 className="text-2xl font-semibold text-gray-800 ml-4 md:ml-0">Dashboard</h1>
+        <h1 className="text-2xl font-semibold text-gray-800 ml-4 md:ml-0"> {title}</h1>
       </div>
       
       <div className="flex items-center space-x-4">

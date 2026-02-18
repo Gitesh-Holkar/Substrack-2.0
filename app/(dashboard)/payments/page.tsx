@@ -254,7 +254,7 @@ export default function PaymentsPage() {
   return (
     <div className='bg-white p-6 rounded-xl shadow-sm'>
       {/* Header */}
-      <div className='flex flex-col md:flex-row justify-between items-start md:items-center pb-4 border-b'>
+      <div className='flex flex-col md:flex-row justify-between items-start md:items-center pb-4 border-b border-slate-200'>
         <div>
           <h2 className='text-xl font-semibold text-gray-700'>
             Payment History
@@ -466,7 +466,7 @@ export default function PaymentsPage() {
                   return (
                     <tr
                       key={transaction.id}
-                      className='bg-white border-b hover:bg-gray-50'
+                      className='bg-white border-b border-slate-200 hover:bg-gray-50'
                     >
                       <td className='px-6 py-4 font-mono text-gray-700'>
                         {generateInvoiceId(transaction.id)}
