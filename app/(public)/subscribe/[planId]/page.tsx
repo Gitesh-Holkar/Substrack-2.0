@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Loader2, Check, XCircle } from 'lucide-react'
 
 // Only safe, public-facing columns from merchants.
-// stripe_api_key, stripe_publishable_key, stripe_webhook_secret,
+// stripe_api_key, stripe_publishable_key, stripe_webhook_secret are NEVER fetched on a public page.
 interface PublicMerchant {
   id: string
   business_name: string
@@ -26,7 +26,7 @@ interface PublicPlan {
   features: string[]
   is_active: boolean
   stripe_price_id: string | null
-  merchants: PublicMerchant
+  merchants_public: PublicMerchant
 }
 
 export default function SubscribePage() {
@@ -51,7 +51,6 @@ export default function SubscribePage() {
 
   const loadPlanDetails = async (): Promise<void> => {
     try {
-      // Explicit column selection — never use select('*') on a public page.
       // merchants join: only business_name, email, logo_url, redirect_url.
       // Stripe keys, bank details, and webhook secrets are never fetched here.
       const { data: planData, error: planError } = await supabase
@@ -67,7 +66,7 @@ export default function SubscribePage() {
           features,
           is_active,
           stripe_price_id,
-          merchants (
+          merchants_public (
             id,
             business_name,
             email,
@@ -86,7 +85,7 @@ export default function SubscribePage() {
 
       const typedPlan = planData as unknown as PublicPlan
       setPlan(typedPlan)
-      setMerchant(typedPlan.merchants)
+      setMerchant(typedPlan.merchants_public)
 
       if (!typedPlan.is_active) {
         setPlanInactive(true)
@@ -106,10 +105,6 @@ export default function SubscribePage() {
       setError('Plan is not configured for payments. Please contact support.')
       return
     }
-
-    // We do NOT check stripe_publishable_key here — that key must never
-    // land in the browser. The create-checkout Edge Function validates
-    // Stripe config server-side using the service_role key.
 
     setProcessing(true)
     setError('')

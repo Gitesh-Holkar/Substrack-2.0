@@ -600,7 +600,7 @@ serve(async (req) => {
     const { data: merchant, error: merchantError } = await supabase
       .from('merchants')
       .select(
-        'stripe_api_key, stripe_webhook_secret, business_name, email, bank_account, gst_number, logo_url, phone'
+        'stripe_api_key, stripe_webhook_secret, business_name, email, business_address, gst_number, logo_url, phone'
       )
       .eq('id', merchantId)
       .single()
@@ -800,7 +800,7 @@ async function handleCheckoutCompleted(
       invoiceDate,
       merchantName: merchant.business_name,
       merchantEmail: merchant.email,
-      merchantAddress: merchant.bank_account,
+      merchantAddress: merchant.business_address,
       merchantGST: merchant.gst_number,
       merchantPhone: merchant.phone,
       merchantLogo: merchant.logo_url,
@@ -987,7 +987,7 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice, merchant: any) {
       invoiceDate,
       merchantName: merchant.business_name,
       merchantEmail: merchant.email,
-      merchantAddress: merchant.bank_account,
+      merchantAddress: merchant.business_address,
       merchantGST: merchant.gst_number,
       merchantPhone: merchant.phone,
       merchantLogo: merchant.logo_url,

@@ -1,6 +1,4 @@
-// lib/types.ts
-// Central type definitions for Substrack.
-//
+
 // CONVENTIONS:
 //   - Merchant: full authenticated merchant profile (dashboard use only)
 //   - PublicMerchant: safe subset for public-facing pages (subscribe page, etc.)
@@ -97,19 +95,3 @@ export interface PaymentTransaction {
   created_at: string
 }
 
-// -----------------------------------------------------------------------------
-// AccessToken
-// NOTE: This table is scheduled for removal. No new code should reference
-// AccessToken. It remains here only until the DROP TABLE migration runs.
-// -----------------------------------------------------------------------------
-/** @deprecated Table is being dropped. Do not use in new code. */
-export interface AccessToken {
-  id: string
-  merchant_id: string
-  subscriber_id: string
-  token: string
-  stripe_session_id?: string
-  expires_at: string
-  used: boolean
-  created_at: string
-}
