@@ -56,7 +56,24 @@ async function onSubscriptionActivated(
   merchant: Merchant,
   supabase: SupabaseClient,
 ): Promise<void> {
-  // Check if subscriber exists - could be a pending Cashfree row created before payment
+  // Fetch plan details at the top - needed for billing type check and emails
+  const { data: plan } = await supabase
+    .from('subscription_plans')
+    .select('name, billing_cycle, billing_type, trial_period_days')
+    .eq('id', event.planId)
+    .single()
+
+  const planName = plan?.name ?? 'Subscription'
+  const billingCycle = plan?.billing_cycle ?? 'monthly'
+
+  // Cashfree postpaid and trial plans: the Rs1 authorization charge at signup
+  // is a mandate verification step, not real income. Cashfree refunds it automatically.
+  // Do not insert a payment transaction for these plans on activation.
+  // Do not attach an invoice to the welcome email - no payment was made yet.
+  const isCashfreeDeferred = event.provider === 'cashfree' &&
+    (plan?.billing_type === 'postpaid' || (plan?.trial_period_days ?? 0) > 0)
+
+  // Check if a pending subscriber row already exists (Cashfree pre-creates one)
   const { data: existing } = await supabase
     .from('subscribers')
     .select('id, status')
@@ -64,15 +81,14 @@ async function onSubscriptionActivated(
     .limit(1)
     .single()
 
-  // If already active - skip entirely (idempotency)
+  // Already active - skip (idempotency)
   if (existing && existing.status !== 'pending') {
     console.log('Subscriber already active, skipping:', event.providerSubscriptionId)
     return
   }
 
-  // If pending row exists (stored by create-subscription before customer paid)
-  // update it to active instead of inserting a duplicate
   if (existing && existing.status === 'pending') {
+    // Update the pending row to active
     await supabase
       .from('subscribers')
       .update({
@@ -81,47 +97,31 @@ async function onSubscriptionActivated(
         provider_customer_id: event.providerCustomerId,
         start_date: event.startDate.toISOString(),
         next_renewal_date: event.nextRenewalDate.toISOString(),
-        last_payment_date: new Date().toISOString(),
-        last_payment_amount: event.amount,
+        last_payment_date: isCashfreeDeferred ? null : new Date().toISOString(),
+        last_payment_amount: isCashfreeDeferred ? null : event.amount,
       })
       .eq('id', existing.id)
 
     console.log('Pending subscriber activated:', existing.id)
-
     await supabase.rpc('increment_subscriber_count', { p_plan_id: event.planId })
 
-    const { data: plan } = await supabase
-      .from('subscription_plans')
-      .select('name, billing_cycle')
-      .eq('id', event.planId)
-      .single()
-
-    const planName = plan?.name ?? 'Subscription'
-    const billingCycle = plan?.billing_cycle ?? 'monthly'
-
-    await sendEmailWithInvoice({
+    await sendWelcomeEmail({
       supabase,
       toEmail: event.customerEmail,
-      subject: `Welcome to ${merchant.business_name}! Your subscription is active`,
-      html: getWelcomeEmailHtml(
-        event.customerName,
-        planName,
-        event.amount,
-        merchant.business_name,
-        merchant.email,
-        formatDate(event.nextRenewalDate),
-      ),
+      customerName: event.customerName,
       merchant,
       subscriberId: existing.id,
       planName,
       amount: event.amount,
       billingCycle,
       transactionId: event.gatewayPaymentId,
-      isWelcome: true,
+      nextRenewalDate: event.nextRenewalDate,
+      withInvoice: !isCashfreeDeferred,
     })
     return
   }
 
+  // No existing row - insert new subscriber
   const subscriberRow: Record<string, unknown> = {
     merchant_id: event.merchantId,
     plan_id: event.planId,
@@ -133,12 +133,11 @@ async function onSubscriptionActivated(
     provider_customer_id: event.providerCustomerId,
     start_date: event.startDate.toISOString(),
     next_renewal_date: event.nextRenewalDate.toISOString(),
-    last_payment_date: new Date().toISOString(),
-    last_payment_amount: event.amount,
+    last_payment_date: isCashfreeDeferred ? null : new Date().toISOString(),
+    last_payment_amount: isCashfreeDeferred ? null : event.amount,
   }
 
-  // Keep legacy Stripe columns populated for Stripe subscribers
-  // so existing queries on stripe_subscription_id continue to work
+  // Keep legacy Stripe columns populated for backwards compatibility
   if (event.provider === 'stripe') {
     subscriberRow.stripe_subscription_id = event.providerSubscriptionId
     subscriberRow.stripe_customer_id = event.providerCustomerId
@@ -156,7 +155,9 @@ async function onSubscriptionActivated(
 
   console.log('Subscriber created:', newSubscriber.id)
 
-  if (event.amount > 0) {
+  // Only insert payment transaction when real money was charged.
+  // isCashfreeDeferred plans have a Rs1 auth (refunded) at signup - skip it.
+  if (event.amount > 0 && !isCashfreeDeferred) {
     const txRow: Record<string, unknown> = {
       merchant_id: event.merchantId,
       subscriber_id: newSubscriber.id,
@@ -177,34 +178,18 @@ async function onSubscriptionActivated(
 
   await supabase.rpc('increment_subscriber_count', { p_plan_id: event.planId })
 
-  const { data: plan } = await supabase
-    .from('subscription_plans')
-    .select('name, billing_cycle')
-    .eq('id', event.planId)
-    .single()
-
-  const planName = plan?.name ?? 'Subscription'
-  const billingCycle = plan?.billing_cycle ?? 'monthly'
-
-  await sendEmailWithInvoice({
+  await sendWelcomeEmail({
     supabase,
     toEmail: event.customerEmail,
-    subject: `Welcome to ${merchant.business_name}! Your subscription is active`,
-    html: getWelcomeEmailHtml(
-      event.customerName,
-      planName,
-      event.amount,
-      merchant.business_name,
-      merchant.email,
-      formatDate(event.nextRenewalDate),
-    ),
+    customerName: event.customerName,
     merchant,
     subscriberId: newSubscriber.id,
     planName,
     amount: event.amount,
     billingCycle,
     transactionId: event.gatewayPaymentId,
-    isWelcome: true,
+    nextRenewalDate: event.nextRenewalDate,
+    withInvoice: !isCashfreeDeferred,
   })
 }
 
@@ -494,6 +479,67 @@ async function sendEmailWithInvoice(params: {
   }
 }
 
+async function sendWelcomeEmail(params: {
+  supabase: SupabaseClient
+  toEmail: string
+  customerName: string
+  merchant: Merchant
+  subscriberId: string
+  planName: string
+  amount: number
+  billingCycle: string
+  transactionId: string
+  nextRenewalDate: Date
+  withInvoice: boolean
+}): Promise<void> {
+  const {
+    supabase, toEmail, customerName, merchant, subscriberId,
+    planName, amount, billingCycle, transactionId, nextRenewalDate, withInvoice,
+  } = params
+
+  const subject = `Welcome to ${merchant.business_name}! Your subscription is active`
+
+  if (withInvoice) {
+    // Prepaid plan: real payment was made - attach invoice
+    await sendEmailWithInvoice({
+      supabase,
+      toEmail,
+      subject,
+      html: getWelcomeEmailHtml(
+        customerName,
+        planName,
+        amount,
+        merchant.business_name,
+        merchant.email,
+        formatDate(nextRenewalDate),
+      ),
+      merchant,
+      subscriberId,
+      planName,
+      amount,
+      billingCycle,
+      transactionId,
+      isWelcome: true,
+    })
+  } else {
+    // Postpaid or Trial plan: no payment made yet - send welcome without invoice
+    await sendEmail(
+      supabase,
+      toEmail,
+      `${merchant.business_name} <no-reply@substrack.work.gd>`,
+      subject,
+      getWelcomeEmailDeferredHtml(
+        customerName,
+        planName,
+        amount,
+        merchant.business_name,
+        merchant.email,
+        formatDate(nextRenewalDate),
+      ),
+    )
+  }
+}
+
 // ---------------------------------------------------------------------------
 // PDF GENERATION
 // ---------------------------------------------------------------------------
@@ -618,6 +664,28 @@ function getWelcomeEmailHtml(
       <div class="row"><span><b>Next Billing</b></span><span>${nextBillingDate}</span></div>
     </div>
     <p>Your invoice is attached to this email.</p>
+    <div class="footer"><p>Questions? Contact us at ${merchantEmail}</p></div>
+  `)
+}
+
+function getWelcomeEmailDeferredHtml(
+  customerName: string,
+  planName: string,
+  amount: number,
+  merchantName: string,
+  merchantEmail: string,
+  firstChargeDate: string,
+): string {
+  return baseEmailWrapper('#4F46E5', `🎉 Welcome to ${merchantName}!`, `
+    <p>Hi ${customerName},</p>
+    <p>Thank you for subscribing! Your subscription mandate is now active and confirmed.</p>
+    <div class="card">
+      <div class="row"><span><b>Plan</b></span><span>${planName}</span></div>
+      <div class="row"><span><b>Subscription Amount</b></span><span>₹${amount.toFixed(2)}</span></div>
+      <div class="row"><span><b>Status</b></span><span style="color:#10b981;font-weight:bold">Active</span></div>
+      <div class="row"><span><b>First Charge Date</b></span><span>${firstChargeDate}</span></div>
+    </div>
+    <p>No payment has been charged yet. Your first invoice will be sent on your first charge date.</p>
     <div class="footer"><p>Questions? Contact us at ${merchantEmail}</p></div>
   `)
 }

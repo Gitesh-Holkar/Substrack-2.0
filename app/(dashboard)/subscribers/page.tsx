@@ -17,6 +17,8 @@ interface SubscriberWithPlan {
   last_payment_date: string | null
   plan_name: string
   plan_price: number
+  plan_billing_type: string
+  plan_trial_period_days: number
 }
 
 export default function SubscribersPage() {
@@ -58,7 +60,9 @@ export default function SubscribersPage() {
           last_payment_date,
           subscription_plans (
             name,
-            price
+            price,
+            billing_type,
+            trial_period_days
           )
         `)
         .eq('merchant_id', user!.id)
@@ -78,6 +82,8 @@ export default function SubscribersPage() {
         last_payment_date: sub.last_payment_date,
         plan_name: sub.subscription_plans?.name || 'Unknown Plan',
         plan_price: sub.subscription_plans?.price || 0,
+        plan_billing_type: sub.subscription_plans?.billing_type || 'prepaid',
+        plan_trial_period_days: sub.subscription_plans?.trial_period_days || 0,
       }))
 
       setSubscribers(formatted)
@@ -328,8 +334,21 @@ export default function SubscribersPage() {
                         {subscriber.customer_email}
                       </div>
                     </td>
-                    <td className='px-6 py-4 font-medium'>
-                      {subscriber.plan_name}
+                    <td className='px-6 py-4'>
+                      <div className='font-medium text-gray-900'>{subscriber.plan_name}</div>
+                      {subscriber.plan_billing_type === 'postpaid' ? (
+                        <span className='mt-1 inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-full'>
+                          Postpaid
+                        </span>
+                      ) : subscriber.plan_trial_period_days > 0 ? (
+                        <span className='mt-1 inline-flex items-center px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700 rounded-full'>
+                          Trial · {subscriber.plan_trial_period_days}d
+                        </span>
+                      ) : (
+                        <span className='mt-1 inline-flex items-center px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 rounded-full'>
+                          Prepaid
+                        </span>
+                      )}
                     </td>
                     <td className='px-6 py-4'>
                       <span
@@ -348,18 +367,35 @@ export default function SubscribersPage() {
                       {formatDate(subscriber.next_renewal_date)}
                     </td>
                     <td className='px-6 py-4'>
-                      {subscriber.last_payment_amount ? (
-                        <div>
-                          <div className='font-medium'>
-                            ₹{subscriber.last_payment_amount.toFixed(2)}
-                          </div>
-                          <div className='text-xs text-gray-500'>
-                            {formatDate(subscriber.last_payment_date)}
-                          </div>
-                        </div>
-                      ) : (
-                        '-'
-                      )}
+                      {(() => {
+                        const isDeferred =
+                          subscriber.plan_billing_type === 'postpaid' ||
+                          subscriber.plan_trial_period_days > 0
+                        const hasRealPayment =
+                          subscriber.last_payment_amount !== null &&
+                          subscriber.last_payment_amount > 1
+
+                        if (hasRealPayment) {
+                          return (
+                            <div>
+                              <div className='font-medium'>
+                                ₹{subscriber.last_payment_amount!.toFixed(2)}
+                              </div>
+                              <div className='text-xs text-gray-500'>
+                                {formatDate(subscriber.last_payment_date)}
+                              </div>
+                            </div>
+                          )
+                        }
+                        if (isDeferred) {
+                          return (
+                            <span className='text-xs text-gray-400'>
+                              Pending first charge
+                            </span>
+                          )
+                        }
+                        return <span className='text-gray-400'>—</span>
+                      })()}
                     </td>
                   </tr>
                 ))}

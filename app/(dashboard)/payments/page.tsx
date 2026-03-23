@@ -68,6 +68,7 @@ export default function PaymentsPage() {
         `
         )
         .eq('merchant_id', user!.id)
+        .or('amount.gt.1,payment_provider.neq.cashfree')
         .order('payment_date', { ascending: false })
 
       if (error) throw error

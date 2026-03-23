@@ -26,6 +26,7 @@ interface PublicPlan {
   billing_cycle: string
   features: string[]
   is_active: boolean
+  archived_at: string | null
   merchants_public: PublicMerchant
 }
 
@@ -66,6 +67,7 @@ export default function SubscribePage() {
           billing_cycle,
           features,
           is_active,
+          archived_at,
           merchants_public (
             id,
             business_name,
@@ -88,7 +90,7 @@ export default function SubscribePage() {
       setPlan(typedPlan)
       setMerchant(typedPlan.merchants_public)
 
-      if (!typedPlan.is_active) {
+      if (!typedPlan.is_active || !!typedPlan.archived_at) {
         setPlanInactive(true)
       }
     } catch (err: unknown) {

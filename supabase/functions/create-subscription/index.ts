@@ -54,7 +54,7 @@ serve(async (req) => {
 
     const { data: plan, error: planError } = await supabase
       .from('subscription_plans')
-      .select('id, merchant_id, name, description, price, currency, billing_cycle, features, is_active, subscriber_count, stripe_product_id, stripe_price_id, cashfree_plan_id, trial_period_days, billing_type')
+      .select('id, merchant_id, name, description, price, currency, billing_cycle, features, is_active, subscriber_count, stripe_product_id, stripe_price_id, cashfree_plan_id, trial_period_days, billing_type, archived_at')
       .eq('id', planId)
       .eq('merchant_id', merchantId)
       .single()
@@ -63,7 +63,7 @@ serve(async (req) => {
       throw new Error('Plan not found')
     }
 
-    if (!plan.is_active) {
+    if (!plan.is_active || !!plan.archived_at) {
       throw new Error('This plan is no longer accepting new subscribers')
     }
 

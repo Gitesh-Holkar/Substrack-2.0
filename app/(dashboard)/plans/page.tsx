@@ -24,6 +24,7 @@ interface PlanWithActiveCount {
   created_at: string
   updated_at: string
   active_subscriber_count?: number
+  total_subscriber_count?: number
 }
 
 export default function PlansPage() {
@@ -34,6 +35,7 @@ export default function PlansPage() {
   const [showEditModal, setShowEditModal] = useState(false)
   const [editingPlan, setEditingPlan] = useState<PlanWithActiveCount | null>(null)
   const [loading, setLoading] = useState(false)
+  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'paused' | 'archived'>('all')
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -89,10 +91,24 @@ export default function PlansPage() {
         countMap[sub.plan_id] = (countMap[sub.plan_id] || 0) + 1
       })
 
+      // Fetch total subscriber counts across ALL statuses (for delete eligibility)
+      const { data: totalSubscriberCounts } = await supabase
+        .from('subscribers')
+        .select('plan_id')
+        .eq('merchant_id', user!.id)
+        .in('plan_id', planIds)
+      // No status filter - counts active + cancelled + failed + pending
+
+      const totalCountMap: { [key: string]: number } = {}
+      totalSubscriberCounts?.forEach(sub => {
+        totalCountMap[sub.plan_id] = (totalCountMap[sub.plan_id] || 0) + 1
+      })
+
       // Merge counts with plans
       const plansWithCounts = plansData.map(plan => ({
         ...plan,
-        active_subscriber_count: countMap[plan.id] || 0
+        active_subscriber_count: countMap[plan.id] || 0,
+        total_subscriber_count: totalCountMap[plan.id] || 0,
       }))
 
       setPlans(plansWithCounts)
@@ -224,14 +240,13 @@ export default function PlansPage() {
   }
 
   const archivePlan = async (plan: PlanWithActiveCount) => {
-    const hasActiveSubscribers = (plan.active_subscriber_count ?? 0) > 0
+    const activeSubs = plan.active_subscriber_count ?? 0
 
-    const confirmed = window.confirm(
-      hasActiveSubscribers
-        ? `This plan has ${plan.active_subscriber_count} active subscriber(s). Archiving will prevent new subscriptions but existing subscribers continue normally. Archive anyway?`
-        : 'Archive this plan? It cannot be reactivated. Archived plans can be deleted after 7 days.'
-    )
-    if (!confirmed) return
+    const message = activeSubs > 0
+      ? `This plan has ${activeSubs} active subscriber(s). Archiving prevents new subscriptions but existing subscribers continue billing normally. Archive anyway?`
+      : 'Archive this plan? This cannot be undone. The plan record is kept permanently for payment history.'
+
+    if (!window.confirm(message)) return
 
     const { error } = await supabase
       .from('subscription_plans')
@@ -245,35 +260,18 @@ export default function PlansPage() {
       alert('Failed to archive plan: ' + error.message)
     } else {
       loadPlans()
-      alert('✅ Plan archived. Eligible for deletion in 7 days.')
     }
   }
 
   const deletePlan = async (plan: PlanWithActiveCount) => {
-    if (!plan.archived_at) {
-      alert('Plan must be archived before it can be deleted.')
+    const totalSubs = plan.total_subscriber_count ?? 0
+
+    if (totalSubs > 0) {
+      alert('Plans with subscriber history cannot be deleted. Use Archive instead — the plan stays as read-only history.')
       return
     }
 
-    const archivedDate = new Date(plan.archived_at)
-    const daysSinceArchived = Math.floor(
-      (Date.now() - archivedDate.getTime()) / (1000 * 60 * 60 * 24)
-    )
-
-    if (daysSinceArchived < 7) {
-      alert(`Plan can be deleted in ${7 - daysSinceArchived} more day(s).`)
-      return
-    }
-
-    if ((plan.active_subscriber_count ?? 0) > 0) {
-      alert('Cannot delete a plan with active subscribers.')
-      return
-    }
-
-    const confirmed = window.confirm(
-      '⚠️ Permanently delete this plan? This cannot be undone.'
-    )
-    if (!confirmed) return
+    if (!window.confirm('Permanently delete this plan? This cannot be undone.')) return
 
     const { error } = await supabase
       .from('subscription_plans')
@@ -284,7 +282,6 @@ export default function PlansPage() {
       alert('Failed to delete plan: ' + error.message)
     } else {
       loadPlans()
-      alert('✅ Plan permanently deleted.')
     }
   }
 
@@ -352,6 +349,16 @@ export default function PlansPage() {
     )
   }
 
+  const activePlans = plans.filter(p => p.is_active && !p.archived_at)
+  const pausedPlans = plans.filter(p => !p.is_active && !p.archived_at)
+  const archivedPlans = plans.filter(p => !!p.archived_at)
+
+  const filteredPlans =
+    activeTab === 'all'      ? plans :
+    activeTab === 'active'   ? activePlans :
+    activeTab === 'paused'   ? pausedPlans :
+    archivedPlans
+
   return (
     <div>
       {/* Payment Gateway Warning */}
@@ -383,11 +390,12 @@ export default function PlansPage() {
         </div>
       )}
 
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+      {/* Header row */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4">
         <div>
           <h2 className="text-xl font-semibold text-gray-700">Manage Subscription Plans</h2>
           <p className="text-sm text-gray-500 mt-1">
-            Create and manage your subscription offerings. Use the toggle to pause/resume new subscriptions.
+            Create and manage your subscription offerings.
           </p>
         </div>
         <button
@@ -402,8 +410,37 @@ export default function PlansPage() {
         </button>
       </div>
 
+      {/* Tab filter with count badges */}
+      <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit mb-6">
+        {([
+          { key: 'all', label: 'All', count: plans.length },
+          { key: 'active', label: 'Active', count: activePlans.length },
+          { key: 'paused', label: 'Paused', count: pausedPlans.length },
+          { key: 'archived', label: 'Archived', count: archivedPlans.length },
+        ] as const).map(({ key, label, count }) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 ${
+              activeTab === key
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            {label}
+            <span className={`px-1.5 py-0.5 text-xs rounded-full font-semibold ${
+              activeTab === key
+                ? 'bg-blue-100 text-blue-700'
+                : 'bg-gray-200 text-gray-600'
+            }`}>
+              {count}
+            </span>
+          </button>
+        ))}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {plans.map((plan) => (
+        {filteredPlans.map((plan) => (
           <div
             key={plan.id}
             className={`bg-white rounded-xl shadow-sm p-6 flex flex-col justify-between border-2 transition-all ${
@@ -417,7 +454,7 @@ export default function PlansPage() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-bold text-gray-800">{plan.name}</h3>
-                    {!plan.is_active && (
+                    {!plan.is_active && !plan.archived_at && (
                       <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-orange-700 bg-orange-100 rounded-full">
                         <PauseCircle className="w-3 h-3 mr-1" />
                         Paused
@@ -437,17 +474,19 @@ export default function PlansPage() {
                   )}
                 </div>
                 <div className="flex flex-col items-end">
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={plan.is_active}
-                      onChange={() => toggleActive(plan)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                  </label>
+                  {!plan.archived_at && (
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={plan.is_active}
+                        onChange={() => toggleActive(plan)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                  )}
                   <span className="text-xs text-gray-500 mt-1">
-                    {plan.is_active ? 'Active' : 'Paused'}
+                    {plan.archived_at ? 'Archived' : plan.is_active ? 'Active' : 'Paused'}
                   </span>
                 </div>
               </div>
@@ -470,87 +509,67 @@ export default function PlansPage() {
                 {plan.active_subscriber_count || 0} Active Subscribers
               </p>
               
-              {/* Show archive/delete state actions */}
               {plan.archived_at ? (
-                <div className="space-y-2">
-                  <div className="bg-gray-50 border border-gray-200 rounded-md p-3 mb-2">
-                    <p className="text-xs font-semibold text-gray-700 mb-1">Plan Archived</p>
-                    <p className="text-xs text-gray-500">
-                      No new subscriptions. Archived {new Date(plan.archived_at).toLocaleDateString()}.
-                    </p>
-                  </div>
-                  {(() => {
-                    const archivedDate = new Date(plan.archived_at!)
-                    const daysSince = Math.floor((Date.now() - archivedDate.getTime()) / (1000 * 60 * 60 * 24))
-                    const canDelete = daysSince >= 7 && (plan.active_subscriber_count ?? 0) === 0
-                    return (
-                      <button
-                        onClick={() => deletePlan(plan)}
-                        disabled={!canDelete}
-                        className={`w-full px-4 py-2 rounded-md font-semibold text-sm flex items-center justify-center transition-colors ${
-                          canDelete
-                            ? 'bg-red-50 text-red-700 hover:bg-red-100'
-                            : 'bg-gray-50 text-gray-400 cursor-not-allowed'
-                        }`}
-                      >
-                        {canDelete
-                          ? 'Delete Plan'
-                          : daysSince < 7
-                          ? `Delete available in ${7 - daysSince} day(s)`
-                          : 'Has active subscribers'}
-                      </button>
-                    )
-                  })()}
-                </div>
-              ) : plan.is_active ? (
-                <div className="space-y-2">
-                  <button
-                    onClick={() => openEditModal(plan)}
-                    className="w-full bg-blue-50 text-blue-700 px-4 py-2 rounded-md font-semibold text-sm hover:bg-blue-100 flex items-center justify-center transition-colors"
-                  >
-                    <Edit2 className="w-4 h-4 mr-2" />
-                    Edit Plan
-                  </button>
-                  {plan.is_active && (merchant?.stripe_api_key || (merchant as any)?.cashfree_app_id) && (
-                    <button
-                      onClick={() => copyPaymentLink(plan)}
-                      className="w-full bg-green-50 text-green-700 px-4 py-2 rounded-md font-semibold text-sm hover:bg-green-100 flex items-center justify-center transition-colors"
-                    >
-                      <ExternalLink className="w-4 h-4 mr-2" />
-                      Copy Payment Link
-                    </button>
-                  )}
-                  <button
-                    onClick={() => archivePlan(plan)}
-                    className="w-full bg-gray-50 text-gray-600 px-4 py-2 rounded-md font-semibold text-sm hover:bg-gray-100 flex items-center justify-center transition-colors"
-                  >
-                    Archive Plan
-                  </button>
+                // Archived - read-only, no actions
+                <div className="bg-gray-50 border border-gray-200 rounded-md p-3">
+                  <p className="text-xs font-semibold text-gray-700">Archived Plan</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Archived {new Date(plan.archived_at).toLocaleDateString()}. Kept for payment history.
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <div className="bg-orange-50 border border-orange-200 rounded-md p-3">
-                    <div className="flex items-start">
-                      <PauseCircle className="w-5 h-5 text-orange-600 mr-2 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-xs font-semibold text-orange-800 mb-1">
-                          Plan Temporarily Paused
-                        </p>
-                        <p className="text-xs text-orange-700">
-                          New subscribers cannot sign up. Existing subscribers continue normally.
-                        </p>
-                        <p className="text-xs text-orange-600 mt-2 font-medium">
-                          Toggle ON to allow new subscriptions
-                        </p>
+                  {plan.is_active && (
+                    <>
+                      <button
+                        onClick={() => openEditModal(plan)}
+                        className="w-full bg-blue-50 text-blue-700 px-4 py-2 rounded-md font-semibold text-sm hover:bg-blue-100 flex items-center justify-center transition-colors"
+                      >
+                        <Edit2 className="w-4 h-4 mr-2" />
+                        Edit Plan
+                      </button>
+                      {(merchant?.stripe_api_key || (merchant as any)?.cashfree_app_id) && (
+                        <button
+                          onClick={() => copyPaymentLink(plan)}
+                          className="w-full bg-green-50 text-green-700 px-4 py-2 rounded-md font-semibold text-sm hover:bg-green-100 flex items-center justify-center transition-colors"
+                        >
+                          <ExternalLink className="w-4 h-4 mr-2" />
+                          Copy Payment Link
+                        </button>
+                      )}
+                    </>
+                  )}
+
+                  {!plan.is_active && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-md p-3">
+                      <div className="flex items-start">
+                        <PauseCircle className="w-5 h-5 text-orange-600 mr-2 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-semibold text-orange-800 mb-1">Plan Temporarily Paused</p>
+                          <p className="text-xs text-orange-700">
+                            New subscribers cannot sign up. Toggle ON to resume.
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <button
-                    onClick={() => archivePlan(plan)}
-                    className="w-full bg-gray-50 text-gray-600 px-4 py-2 rounded-md font-semibold text-sm hover:bg-gray-100 flex items-center justify-center transition-colors"
-                  >
-                    Archive Plan
-                  </button>
+                  )}
+
+                  {/* Archive or Delete depending on subscriber history */}
+                  {(plan.total_subscriber_count ?? 0) > 0 ? (
+                    <button
+                      onClick={() => archivePlan(plan)}
+                      className="w-full bg-gray-50 text-gray-600 px-4 py-2 rounded-md font-semibold text-sm hover:bg-gray-100 flex items-center justify-center transition-colors"
+                    >
+                      Archive Plan
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => deletePlan(plan)}
+                      className="w-full bg-red-50 text-red-600 px-4 py-2 rounded-md font-semibold text-sm hover:bg-red-100 flex items-center justify-center transition-colors"
+                    >
+                      Delete Plan
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -558,21 +577,32 @@ export default function PlansPage() {
         ))}
       </div>
 
-      {plans.length === 0 && (
+      {filteredPlans.length === 0 && (
         <div className="text-center py-12 bg-white rounded-xl shadow-sm">
           <div className="text-gray-400 text-5xl mb-4">📋</div>
-          <h3 className="text-lg font-semibold text-gray-700 mb-2">No plans created yet</h3>
-          <p className="text-gray-500 mb-4">Create your first subscription plan to get started</p>
-          <button
-            onClick={() => {
-              resetForm()
-              setShowModal(true)
-            }}
-            className="inline-flex items-center bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700"
-          >
-            <Plus className="w-5 h-5 mr-2" />
-            Create Your First Plan
-          </button>
+          {plans.length === 0 ? (
+            <>
+              <h3 className="text-lg font-semibold text-gray-700 mb-2">No plans created yet</h3>
+              <p className="text-gray-500 mb-4">Create your first subscription plan to get started</p>
+              <button
+                onClick={() => {
+                  resetForm()
+                  setShowModal(true)
+                }}
+                className="inline-flex items-center bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700"
+              >
+                <Plus className="w-5 h-5 mr-2" />
+                Create Your First Plan
+              </button>
+            </>
+          ) : (
+            <>
+              <h3 className="text-lg font-semibold text-gray-700 mb-2">
+                No {activeTab === 'all' ? '' : activeTab} plans
+              </h3>
+              <p className="text-gray-500">Switch tabs to view other plans.</p>
+            </>
+          )}
         </div>
       )}
 
