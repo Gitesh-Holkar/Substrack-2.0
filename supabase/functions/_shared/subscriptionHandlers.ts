@@ -1,0 +1,667 @@
+
+// Gateway-agnostic business logic for all subscription lifecycle events.
+// Both stripe-webhook and cashfree-webhook call handleNormalizedEvent().
+//
+// Import with:
+//   import { handleNormalizedEvent } from '../_shared/subscriptionHandlers.ts'
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import jsPDF from 'https://esm.sh/jspdf@2.5.1'
+import autoTable from 'https://esm.sh/jspdf-autotable@3.8.2'
+import type { NormalizedEvent } from './normalizedEvents.ts'
+import type { Merchant } from './types.ts'
+
+type SupabaseClient = ReturnType<typeof createClient>
+
+// ---------------------------------------------------------------------------
+// MAIN ENTRY POINT
+// ---------------------------------------------------------------------------
+
+export async function handleNormalizedEvent(
+  event: NormalizedEvent,
+  merchant: Merchant,
+  supabase: SupabaseClient,
+): Promise<void> {
+  switch (event.type) {
+    case 'subscription.activated':
+      await onSubscriptionActivated(event, merchant, supabase)
+      break
+    case 'payment.succeeded':
+      await onPaymentSucceeded(event, merchant, supabase)
+      break
+    case 'payment.failed':
+      await onPaymentFailed(event, merchant, supabase)
+      break
+    case 'payment.processing':
+      await onPaymentProcessing(event, supabase)
+      break
+    case 'subscription.cancelled':
+      await onSubscriptionCancelled(event, supabase)
+      break
+    case 'subscription.updated':
+      await onSubscriptionUpdated(event, supabase)
+      break
+    case 'unknown':
+      console.log(`Ignoring unhandled event: ${event.rawEventType}`)
+      break
+  }
+}
+
+// ---------------------------------------------------------------------------
+// EVENT HANDLERS
+// ---------------------------------------------------------------------------
+
+async function onSubscriptionActivated(
+  event: Extract<NormalizedEvent, { type: 'subscription.activated' }>,
+  merchant: Merchant,
+  supabase: SupabaseClient,
+): Promise<void> {
+  // Check if subscriber exists - could be a pending Cashfree row created before payment
+  const { data: existing } = await supabase
+    .from('subscribers')
+    .select('id, status')
+    .eq('provider_subscription_id', event.providerSubscriptionId)
+    .limit(1)
+    .single()
+
+  // If already active - skip entirely (idempotency)
+  if (existing && existing.status !== 'pending') {
+    console.log('Subscriber already active, skipping:', event.providerSubscriptionId)
+    return
+  }
+
+  // If pending row exists (stored by create-subscription before customer paid)
+  // update it to active instead of inserting a duplicate
+  if (existing && existing.status === 'pending') {
+    await supabase
+      .from('subscribers')
+      .update({
+        status: 'active',
+        payment_provider: event.provider,
+        provider_customer_id: event.providerCustomerId,
+        start_date: event.startDate.toISOString(),
+        next_renewal_date: event.nextRenewalDate.toISOString(),
+        last_payment_date: new Date().toISOString(),
+        last_payment_amount: event.amount,
+      })
+      .eq('id', existing.id)
+
+    console.log('Pending subscriber activated:', existing.id)
+
+    await supabase.rpc('increment_subscriber_count', { p_plan_id: event.planId })
+
+    const { data: plan } = await supabase
+      .from('subscription_plans')
+      .select('name, billing_cycle')
+      .eq('id', event.planId)
+      .single()
+
+    const planName = plan?.name ?? 'Subscription'
+    const billingCycle = plan?.billing_cycle ?? 'monthly'
+
+    await sendEmailWithInvoice({
+      supabase,
+      toEmail: event.customerEmail,
+      subject: `Welcome to ${merchant.business_name}! Your subscription is active`,
+      html: getWelcomeEmailHtml(
+        event.customerName,
+        planName,
+        event.amount,
+        merchant.business_name,
+        merchant.email,
+        formatDate(event.nextRenewalDate),
+      ),
+      merchant,
+      subscriberId: existing.id,
+      planName,
+      amount: event.amount,
+      billingCycle,
+      transactionId: event.gatewayPaymentId,
+      isWelcome: true,
+    })
+    return
+  }
+
+  const subscriberRow: Record<string, unknown> = {
+    merchant_id: event.merchantId,
+    plan_id: event.planId,
+    customer_name: event.customerName,
+    customer_email: event.customerEmail,
+    status: 'active',
+    payment_provider: event.provider,
+    provider_subscription_id: event.providerSubscriptionId,
+    provider_customer_id: event.providerCustomerId,
+    start_date: event.startDate.toISOString(),
+    next_renewal_date: event.nextRenewalDate.toISOString(),
+    last_payment_date: new Date().toISOString(),
+    last_payment_amount: event.amount,
+  }
+
+  // Keep legacy Stripe columns populated for Stripe subscribers
+  // so existing queries on stripe_subscription_id continue to work
+  if (event.provider === 'stripe') {
+    subscriberRow.stripe_subscription_id = event.providerSubscriptionId
+    subscriberRow.stripe_customer_id = event.providerCustomerId
+  }
+
+  const { data: newSubscriber, error } = await supabase
+    .from('subscribers')
+    .insert(subscriberRow)
+    .select()
+    .single()
+
+  if (error || !newSubscriber) {
+    throw new Error(`Failed to create subscriber: ${error?.message}`)
+  }
+
+  console.log('Subscriber created:', newSubscriber.id)
+
+  if (event.amount > 0) {
+    const txRow: Record<string, unknown> = {
+      merchant_id: event.merchantId,
+      subscriber_id: newSubscriber.id,
+      plan_id: event.planId,
+      amount: event.amount,
+      status: 'success',
+      payment_provider: event.provider,
+      provider_payment_id: event.gatewayPaymentId,
+      payment_date: new Date().toISOString(),
+    }
+
+    if (event.provider === 'stripe') {
+      txRow.stripe_payment_id = event.gatewayPaymentId
+    }
+
+    await supabase.from('payment_transactions').insert(txRow)
+  }
+
+  await supabase.rpc('increment_subscriber_count', { p_plan_id: event.planId })
+
+  const { data: plan } = await supabase
+    .from('subscription_plans')
+    .select('name, billing_cycle')
+    .eq('id', event.planId)
+    .single()
+
+  const planName = plan?.name ?? 'Subscription'
+  const billingCycle = plan?.billing_cycle ?? 'monthly'
+
+  await sendEmailWithInvoice({
+    supabase,
+    toEmail: event.customerEmail,
+    subject: `Welcome to ${merchant.business_name}! Your subscription is active`,
+    html: getWelcomeEmailHtml(
+      event.customerName,
+      planName,
+      event.amount,
+      merchant.business_name,
+      merchant.email,
+      formatDate(event.nextRenewalDate),
+    ),
+    merchant,
+    subscriberId: newSubscriber.id,
+    planName,
+    amount: event.amount,
+    billingCycle,
+    transactionId: event.gatewayPaymentId,
+    isWelcome: true,
+  })
+}
+
+async function onPaymentSucceeded(
+  event: Extract<NormalizedEvent, { type: 'payment.succeeded' }>,
+  merchant: Merchant,
+  supabase: SupabaseClient,
+): Promise<void> {
+  const { data: subscriber } = await supabase
+    .from('subscribers')
+    .select('id, merchant_id, plan_id, customer_name, customer_email')
+    .eq('provider_subscription_id', event.providerSubscriptionId)
+    .limit(1)
+    .single()
+
+  if (!subscriber) {
+    console.log('No subscriber found for:', event.providerSubscriptionId)
+    return
+  }
+
+  // Skip ₹1 mandate authorization charge — it is not a real subscription payment.
+  // RBI requires this verification step for UPI AutoPay mandates. It is refunded
+  // automatically and must not generate an invoice or appear as a payment record.
+  if (event.amount <= 1 && event.provider === 'cashfree') {
+    console.log('Skipping ₹1 mandate auth charge for:', event.providerSubscriptionId)
+    return
+  }
+
+  const updates: Record<string, unknown> = {
+    status: 'active',
+    last_payment_date: new Date().toISOString(),
+    last_payment_amount: event.amount,
+  }
+  if (event.nextRenewalDate) {
+    updates.next_renewal_date = event.nextRenewalDate.toISOString()
+  }
+
+  await supabase.from('subscribers').update(updates).eq('id', subscriber.id)
+
+  // Idempotency: skip if this payment was already recorded
+  const { data: existingTx } = await supabase
+    .from('payment_transactions')
+    .select('id')
+    .eq('provider_payment_id', event.gatewayPaymentId)
+    .limit(1)
+    .single()
+
+  if (!existingTx) {
+    const txRow: Record<string, unknown> = {
+      merchant_id: subscriber.merchant_id,
+      subscriber_id: subscriber.id,
+      plan_id: subscriber.plan_id,
+      amount: event.amount,
+      status: 'success',
+      payment_provider: event.provider,
+      provider_payment_id: event.gatewayPaymentId,
+      payment_date: new Date().toISOString(),
+    }
+
+    if (event.provider === 'stripe') {
+      txRow.stripe_payment_id = event.gatewayPaymentId
+    }
+
+    await supabase.from('payment_transactions').insert(txRow)
+  }
+
+  const { data: plan } = await supabase
+    .from('subscription_plans')
+    .select('name, billing_cycle')
+    .eq('id', subscriber.plan_id)
+    .single()
+
+  const planName = plan?.name ?? 'Subscription'
+  const billingCycle = plan?.billing_cycle ?? 'monthly'
+  const nextBilling = event.nextRenewalDate ? formatDate(event.nextRenewalDate) : 'N/A'
+
+  await sendEmailWithInvoice({
+    supabase,
+    toEmail: subscriber.customer_email,
+    subject: `Payment Received - ${merchant.business_name}`,
+    html: getPaymentSuccessEmailHtml(
+      subscriber.customer_name,
+      planName,
+      event.amount,
+      merchant.business_name,
+      merchant.email,
+      nextBilling,
+    ),
+    merchant,
+    subscriberId: subscriber.id,
+    planName,
+    amount: event.amount,
+    billingCycle,
+    transactionId: event.gatewayPaymentId,
+    isWelcome: false,
+  })
+}
+
+async function onPaymentFailed(
+  event: Extract<NormalizedEvent, { type: 'payment.failed' }>,
+  merchant: Merchant,
+  supabase: SupabaseClient,
+): Promise<void> {
+  const { data: subscriber } = await supabase
+    .from('subscribers')
+    .select('id, merchant_id, plan_id, customer_name, customer_email')
+    .eq('provider_subscription_id', event.providerSubscriptionId)
+    .limit(1)
+    .single()
+
+  if (!subscriber) {
+    console.log('No subscriber found for:', event.providerSubscriptionId)
+    return
+  }
+
+  await supabase
+    .from('subscribers')
+    .update({ status: 'failed' })
+    .eq('id', subscriber.id)
+
+  const { data: existingTx } = await supabase
+    .from('payment_transactions')
+    .select('id')
+    .eq('provider_payment_id', `failed_${event.providerSubscriptionId}_${Date.now()}`)
+    .limit(1)
+    .single()
+
+  if (!existingTx) {
+    await supabase.from('payment_transactions').insert({
+      merchant_id: subscriber.merchant_id,
+      subscriber_id: subscriber.id,
+      plan_id: subscriber.plan_id,
+      amount: event.amount,
+      status: 'failed',
+      payment_provider: event.provider,
+      provider_payment_id: `failed_${event.providerSubscriptionId}_${Date.now()}`,
+      payment_date: new Date().toISOString(),
+    })
+  }
+
+  const { data: plan } = await supabase
+    .from('subscription_plans')
+    .select('name')
+    .eq('id', subscriber.plan_id)
+    .single()
+
+  const planName = plan?.name ?? 'Subscription'
+
+  await sendEmail(
+    supabase,
+    subscriber.customer_email,
+    `${merchant.business_name} <no-reply@substrack.work.gd>`,
+    `Payment Failed - Action Required`,
+    getPaymentFailedEmailHtml(
+      subscriber.customer_name,
+      planName,
+      event.amount,
+      merchant.business_name,
+      merchant.email,
+    ),
+  )
+}
+
+async function onPaymentProcessing(
+  event: Extract<NormalizedEvent, { type: 'payment.processing' }>,
+  supabase: SupabaseClient,
+): Promise<void> {
+  // UPI 24-hour pre-debit window — keep subscriber active, don't send failure email
+  // The payment_intent ID is stored as providerSubscriptionId here temporarily.
+  // We look up the subscriber via stripe_subscription_id fallback since
+  // payment_intent.processing doesn't carry the subscription ID directly.
+  console.log('Payment processing (UPI mandate):', event.providerSubscriptionId)
+
+  // No status change, no email — just log and return.
+  // invoice.payment_succeeded or invoice.payment_failed will follow.
+}
+
+async function onSubscriptionCancelled(
+  event: Extract<NormalizedEvent, { type: 'subscription.cancelled' }>,
+  supabase: SupabaseClient,
+): Promise<void> {
+  const { data: subscriber } = await supabase
+    .from('subscribers')
+    .select('id, plan_id')
+    .eq('provider_subscription_id', event.providerSubscriptionId)
+    .limit(1)
+    .single()
+
+  if (!subscriber) {
+    console.log('No subscriber found for:', event.providerSubscriptionId)
+    return
+  }
+
+  await supabase
+    .from('subscribers')
+    .update({ status: 'cancelled' })
+    .eq('id', subscriber.id)
+
+  await supabase.rpc('decrement_subscriber_count', { p_plan_id: subscriber.plan_id })
+
+  console.log('Subscription cancelled:', event.providerSubscriptionId)
+}
+
+async function onSubscriptionUpdated(
+  event: Extract<NormalizedEvent, { type: 'subscription.updated' }>,
+  supabase: SupabaseClient,
+): Promise<void> {
+  if (!event.nextRenewalDate) return
+
+  await supabase
+    .from('subscribers')
+    .update({ next_renewal_date: event.nextRenewalDate.toISOString() })
+    .eq('provider_subscription_id', event.providerSubscriptionId)
+}
+
+// ---------------------------------------------------------------------------
+// EMAIL HELPERS
+// ---------------------------------------------------------------------------
+
+async function sendEmail(
+  supabase: SupabaseClient,
+  to: string,
+  from: string,
+  subject: string,
+  html: string,
+  attachment?: { filename: string; content: string; content_type: string },
+): Promise<void> {
+  try {
+    const body: Record<string, unknown> = { to, from, subject, html }
+    if (attachment) body.attachments = [attachment]
+
+    const { error } = await supabase.functions.invoke('send-email', { body })
+    if (error) console.error('Failed to send email:', error)
+  } catch (err) {
+    console.error('sendEmail error:', err)
+  }
+}
+
+async function sendEmailWithInvoice(params: {
+  supabase: SupabaseClient
+  toEmail: string
+  subject: string
+  html: string
+  merchant: Merchant
+  subscriberId: string
+  planName: string
+  amount: number
+  billingCycle: string
+  transactionId: string
+  isWelcome: boolean
+}): Promise<void> {
+  const { supabase, toEmail, subject, html, merchant, subscriberId, planName, amount, billingCycle, transactionId } = params
+
+  try {
+    const invoiceId = `INV-${new Date().toISOString().split('T')[0].replace(/-/g, '').substring(2)}-${subscriberId.substring(0, 8).toUpperCase()}`
+    const pdfBase64 = await generateInvoicePDF({
+      invoiceId,
+      merchantName: merchant.business_name,
+      merchantEmail: merchant.email,
+      merchantAddress: merchant.business_address ?? undefined,
+      merchantGST: merchant.gst_number ?? undefined,
+      merchantLogo: merchant.logo_url ?? undefined,
+      planName,
+      amount,
+      billingCycle,
+      transactionId,
+    })
+
+    await sendEmail(
+      supabase,
+      toEmail,
+      `${merchant.business_name} <no-reply@substrack.work.gd>`,
+      subject,
+      html,
+      { filename: `${invoiceId}.pdf`, content: pdfBase64, content_type: 'application/pdf' },
+    )
+  } catch (err) {
+    console.error('sendEmailWithInvoice error — sending without PDF:', err)
+    // Still send the email even if PDF generation fails
+    await sendEmail(
+      supabase,
+      toEmail,
+      `${merchant.business_name} <no-reply@substrack.work.gd>`,
+      subject,
+      html,
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PDF GENERATION
+// ---------------------------------------------------------------------------
+
+async function generateInvoicePDF(data: {
+  invoiceId: string
+  merchantName: string
+  merchantEmail: string
+  merchantAddress?: string
+  merchantGST?: string
+  merchantLogo?: string
+  planName: string
+  amount: number
+  billingCycle: string
+  transactionId: string
+}): Promise<string> {
+  const doc = new jsPDF()
+  const primary: [number, number, number] = [79, 70, 229]
+  const text: [number, number, number] = [55, 65, 81]
+  const light: [number, number, number] = [243, 244, 246]
+  let y = 20
+
+  if (data.merchantLogo) {
+    try {
+      const res = await fetch(data.merchantLogo)
+      if (res.ok) {
+        const buf = await res.arrayBuffer()
+        const b64 = btoa(new Uint8Array(buf).reduce((d, b) => d + String.fromCharCode(b), ''))
+        const ct = res.headers.get('content-type') ?? 'image/png'
+        const type = ct.includes('jpeg') || ct.includes('jpg') ? 'JPEG' : 'PNG'
+        doc.addImage(`data:${ct};base64,${b64}`, type, 20, y - 5, 30, 30)
+      }
+    } catch { /* skip logo on error */ }
+  }
+
+  const nameX = data.merchantLogo ? 55 : 20
+  doc.setFontSize(20).setTextColor(...primary).setFont('helvetica', 'bold')
+  doc.text(data.merchantName, nameX, y + 5)
+  doc.setFontSize(24).setTextColor(...text)
+  doc.text('INVOICE', 190, y + 5, { align: 'right' })
+  y += 35
+
+  doc.setFontSize(9).setTextColor(...text).setFont('helvetica', 'normal')
+  doc.text(`Invoice No: ${data.invoiceId}`, 20, y)
+  doc.text(`Date: ${new Date().toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' })}`, 20, y + 5)
+  if (data.merchantAddress) doc.text(data.merchantAddress, 20, y + 10)
+  if (data.merchantGST) doc.text(`GSTIN: ${data.merchantGST}`, 20, y + 15)
+  doc.text(data.merchantEmail, 20, y + 20)
+  y += 30
+
+  doc.setDrawColor(...light)
+  doc.line(20, y, 190, y)
+  y += 8
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Description', 'Billing Cycle', 'Amount (INR)']],
+    body: [[data.planName, data.billingCycle, data.amount.toFixed(2)]],
+    theme: 'striped',
+    headStyles: { fillColor: primary, textColor: 255, fontSize: 10 },
+    bodyStyles: { textColor: text, fontSize: 10 },
+    columnStyles: { 2: { halign: 'right' } },
+    margin: { left: 20, right: 20 },
+  })
+
+  const finalY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
+  doc.setFontSize(12).setFont('helvetica', 'bold').setTextColor(...primary)
+  doc.text(`Total: INR ${data.amount.toFixed(2)}`, 190, finalY, { align: 'right' })
+
+  if (data.transactionId) {
+    doc.setFontSize(8).setFont('helvetica', 'normal').setTextColor(...text)
+    doc.text(`Transaction ID: ${data.transactionId}`, 20, finalY + 10)
+  }
+
+  const pageH = doc.internal.pageSize.getHeight()
+  doc.setDrawColor(...light).line(20, pageH - 20, 190, pageH - 20)
+  doc.setFontSize(8).setTextColor(100, 116, 139)
+  doc.text('Thank you for your business!', 105, pageH - 14, { align: 'center' })
+
+  return doc.output('datauristring').split(',')[1]
+}
+
+// ---------------------------------------------------------------------------
+// EMAIL TEMPLATES
+// ---------------------------------------------------------------------------
+
+function formatDate(date: Date): string {
+  return date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' })
+}
+
+function baseEmailWrapper(headerColor: string, headerText: string, body: string): string {
+  return `<!DOCTYPE html><html><head><style>
+    body{font-family:Arial,sans-serif;line-height:1.6;color:#333}
+    .container{max-width:600px;margin:0 auto;padding:20px}
+    .header{background:${headerColor};color:white;padding:20px;text-align:center;border-radius:8px 8px 0 0}
+    .content{background:#f9fafb;padding:30px;border-radius:0 0 8px 8px}
+    .card{background:white;padding:20px;border-radius:8px;margin:20px 0;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+    .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e5e7eb}
+    .row:last-child{border-bottom:none}
+    .footer{text-align:center;margin-top:30px;color:#6b7280;font-size:13px}
+  </style></head><body><div class="container">
+    <div class="header"><h1 style="margin:0;font-size:22px">${headerText}</h1></div>
+    <div class="content">${body}</div>
+  </div></body></html>`
+}
+
+function getWelcomeEmailHtml(
+  customerName: string,
+  planName: string,
+  amount: number,
+  merchantName: string,
+  merchantEmail: string,
+  nextBillingDate: string,
+): string {
+  return baseEmailWrapper('#4F46E5', `🎉 Welcome to ${merchantName}!`, `
+    <p>Hi ${customerName},</p>
+    <p>Thank you for subscribing! Your subscription is now active.</p>
+    <div class="card">
+      <div class="row"><span><b>Plan</b></span><span>${planName}</span></div>
+      <div class="row"><span><b>Amount</b></span><span>₹${amount.toFixed(2)}</span></div>
+      <div class="row"><span><b>Status</b></span><span style="color:#10b981;font-weight:bold">Active</span></div>
+      <div class="row"><span><b>Next Billing</b></span><span>${nextBillingDate}</span></div>
+    </div>
+    <p>Your invoice is attached to this email.</p>
+    <div class="footer"><p>Questions? Contact us at ${merchantEmail}</p></div>
+  `)
+}
+
+function getPaymentSuccessEmailHtml(
+  customerName: string,
+  planName: string,
+  amount: number,
+  merchantName: string,
+  merchantEmail: string,
+  nextBillingDate: string,
+): string {
+  return baseEmailWrapper('#10b981', '💳 Payment Received', `
+    <p>Hi ${customerName},</p>
+    <p>Your payment has been successfully processed!</p>
+    <div class="card">
+      <div class="row"><span><b>Plan</b></span><span>${planName}</span></div>
+      <div class="row"><span><b>Amount Paid</b></span><span>₹${amount.toFixed(2)}</span></div>
+      <div class="row"><span><b>Next Billing</b></span><span>${nextBillingDate}</span></div>
+    </div>
+    <p>Your invoice is attached to this email.</p>
+    <div class="footer"><p>Questions? Contact us at ${merchantEmail}</p><p style="font-size:12px;color:#9ca3af">Automated receipt from ${merchantName}</p></div>
+  `)
+}
+
+function getPaymentFailedEmailHtml(
+  customerName: string,
+  planName: string,
+  amount: number,
+  merchantName: string,
+  merchantEmail: string,
+): string {
+  return baseEmailWrapper('#ef4444', '⚠️ Payment Failed', `
+    <p>Hi ${customerName},</p>
+    <div style="background:#fef2f2;border:1px solid #fecaca;padding:15px;border-radius:6px;margin:16px 0">
+      <p style="margin:0;color:#991b1b"><b>We couldn't process your payment.</b></p>
+      <p style="margin:8px 0 0;color:#991b1b">Your subscription may be at risk of cancellation.</p>
+    </div>
+    <div class="card">
+      <div class="row"><span><b>Plan</b></span><span>${planName}</span></div>
+      <div class="row"><span><b>Amount</b></span><span>₹${amount.toFixed(2)}</span></div>
+      <div class="row"><span><b>Status</b></span><span style="color:#ef4444">Failed</span></div>
+    </div>
+    <p>Please update your payment method to continue your subscription.</p>
+    <div class="footer"><p>Need help? Contact ${merchantEmail}</p><p style="font-size:12px;color:#9ca3af">Automated notice from ${merchantName}</p></div>
+  `)
+}

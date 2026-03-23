@@ -27,3 +27,23 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/check-subscription/deno.json"
 entrypoint = "./functions/check-subscription/index.ts"
+
+# --- New functions below ---
+ 
+[functions.create-subscription]
+enabled = true
+verify_jwt = false
+import_map = "./functions/create-subscription/deno.json"
+entrypoint = "./functions/create-subscription/index.ts"
+ 
+[functions.cashfree-webhook]
+enabled = true
+verify_jwt = false
+import_map = "./functions/cashfree-webhook/deno.json"
+entrypoint = "./functions/cashfree-webhook/index.ts"
+ 
+[functions.manage-plan]
+enabled = true
+verify_jwt = true
+import_map = "./functions/manage-plan/deno.json"
+entrypoint = "./functions/manage-plan/index.ts"

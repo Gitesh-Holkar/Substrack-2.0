@@ -22,6 +22,13 @@ interface StripeConstructor {
   createFetchHttpClient?: () => unknown
 }
 
+interface MerchantPaymentConfig {
+  payment_provider?: 'stripe' | 'cashfree'
+  cashfree_app_id?: string
+  cashfree_secret_key?: string
+  cashfree_webhook_secret?: string
+}
+
 export default function Settings() {
   const { user, merchant, refreshMerchant } = useAuth()
   const [activeTab, setActiveTab] = useState('business')
@@ -38,6 +45,13 @@ export default function Settings() {
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [redirectUrl, setRedirectUrl] = useState('')
+  const [cashfreeInfo, setCashfreeInfo] = useState({
+    cashfree_app_id: '',
+    cashfree_secret_key: '',
+  })
+  const [showCashfreeSecret, setShowCashfreeSecret] = useState(false)
+  const [paymentProvider, setPaymentProvider] = useState<'stripe' | 'cashfree'>('stripe')
+  const [switchingProvider, setSwitchingProvider] = useState(false)
 
   // ✅ FIX #1: Window access - Initialize as empty, set in useEffect
   const [webhookUrl, setWebhookUrl] = useState('')
@@ -105,6 +119,8 @@ export default function Settings() {
 
   useEffect(() => {
     if (merchant) {
+      const merchantPaymentConfig = merchant as typeof merchant & MerchantPaymentConfig
+
       setBusinessInfo({
         full_name: merchant.full_name || '',
         business_name: merchant.business_name || '',
@@ -119,6 +135,11 @@ export default function Settings() {
         stripe_publishable_key: merchant.stripe_publishable_key || '',
         stripe_webhook_secret: (merchant as { stripe_webhook_secret?: string }).stripe_webhook_secret || '',
       })
+      setCashfreeInfo({
+        cashfree_app_id: merchantPaymentConfig.cashfree_app_id || '',
+        cashfree_secret_key: merchantPaymentConfig.cashfree_secret_key || '',
+      })
+      setPaymentProvider(merchantPaymentConfig.payment_provider || 'stripe')
       setLogoPreview(merchant.logo_url || null)
       setRedirectUrl((merchant as { redirect_url?: string }).redirect_url || '')
     }
@@ -302,6 +323,57 @@ export default function Settings() {
     }
   }
 
+  const handleCashfreeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
+    setSuccessMessage('')
+
+    try {
+      const { error } = await supabase
+        .from('merchants')
+        .update({
+          cashfree_app_id: cashfreeInfo.cashfree_app_id,
+          cashfree_secret_key: cashfreeInfo.cashfree_secret_key,
+        })
+        .eq('id', user!.id)
+
+      if (error) throw error
+
+      await refreshMerchant()
+      setSuccessMessage('Cashfree credentials saved successfully!')
+      setTimeout(() => setSuccessMessage(''), 3000)
+    } catch (error) {
+      console.error('Error saving Cashfree credentials:', error)
+      alert('Failed to save Cashfree credentials')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleProviderSwitch = async (provider: 'stripe' | 'cashfree') => {
+    setSwitchingProvider(true)
+    try {
+      const { error } = await supabase
+        .from('merchants')
+        .update({ payment_provider: provider })
+        .eq('id', user!.id)
+
+      if (error) throw error
+
+      setPaymentProvider(provider)
+      await refreshMerchant()
+      setSuccessMessage(
+        `Payment gateway switched to ${provider === 'stripe' ? 'Stripe' : 'Cashfree'}`
+      )
+      setTimeout(() => setSuccessMessage(''), 3000)
+    } catch (error) {
+      console.error('Error switching provider:', error)
+      alert('Failed to switch payment provider')
+    } finally {
+      setSwitchingProvider(false)
+    }
+  }
+
   const handleRedirectUrlSave = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -357,7 +429,7 @@ export default function Settings() {
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
-                Stripe Integration
+                Payment Setup
               </button>
               <button
                 onClick={() => setActiveTab('widget')}
@@ -563,249 +635,367 @@ export default function Settings() {
 
             {/* STRIPE TAB */}
             {activeTab === 'stripe' && (
-              <form onSubmit={handleStripeSubmit} className='space-y-6'>
-                <div>
-                  <h3 className='text-lg font-semibold text-gray-800 mb-2'>
-                    Stripe Integration
-                  </h3>
-                  <p className='text-sm text-gray-600 mb-6'>
-                    Connect your Stripe account to accept payments. Get your API keys from your{' '}
-                    <a
-                      href='https://dashboard.stripe.com/apikeys'
-                      target='_blank'
-                      rel='noopener noreferrer'
-                      className='text-blue-600 hover:underline'
-                    >
-                      Stripe Dashboard
-                    </a>
-                    .
+              <>
+                {/* Gateway Selector */}
+                <div className='bg-white rounded-lg border border-gray-200 p-6 mb-6'>
+                  <h3 className='text-lg font-semibold text-gray-800 mb-1'>Active Payment Gateway</h3>
+                  <p className='text-sm text-gray-500 mb-4'>
+                    Choose which gateway processes payments for your subscribers.
+                    Switching takes effect immediately for new subscriptions.
                   </p>
+                  <div className='flex gap-3'>
+                    <button
+                      type='button'
+                      onClick={() => handleProviderSwitch('stripe')}
+                      disabled={switchingProvider || paymentProvider === 'stripe'}
+                      className={`flex-1 py-3 px-4 rounded-lg border-2 text-sm font-medium transition-colors ${
+                        paymentProvider === 'stripe'
+                          ? 'border-blue-600 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      {paymentProvider === 'stripe' && <Check className='w-4 h-4 inline mr-2' />}
+                      Stripe (International)
+                    </button>
+                    <button
+                      type='button'
+                      onClick={() => handleProviderSwitch('cashfree')}
+                      disabled={switchingProvider || paymentProvider === 'cashfree'}
+                      className={`flex-1 py-3 px-4 rounded-lg border-2 text-sm font-medium transition-colors ${
+                        paymentProvider === 'cashfree'
+                          ? 'border-blue-600 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      {paymentProvider === 'cashfree' && <Check className='w-4 h-4 inline mr-2' />}
+                      Cashfree (India)
+                    </button>
+                  </div>
+                </div>
 
-                  <div className='space-y-4'>
-                    <div>
-                      <label className='block text-sm font-medium text-gray-700 mb-1'>
-                        Stripe Secret Key
-                      </label>
-                      <div className='flex gap-2'>
-                        <div className='relative flex-1'>
-                          <input
-                            type={showSecretKey ? 'text' : 'password'}
-                            value={stripeInfo.stripe_secret_key}
-                            onChange={(e) =>
-                              setStripeInfo({
-                                ...stripeInfo,
-                                stripe_secret_key: e.target.value,
-                              })
-                            }
-                            className='w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500'
-                            placeholder='sk_live_...'
-                          />
-                          <button
-                            type='button'
-                            onClick={() => setShowSecretKey(!showSecretKey)}
-                            className='absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700'
-                          >
-                            {showSecretKey ? (
-                              <EyeOff className='w-5 h-5' />
-                            ) : (
-                              <Eye className='w-5 h-5' />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                      <p className='text-xs text-gray-500 mt-1'>
-                        Starts with sk_live_ or sk_test_
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className='block text-sm font-medium text-gray-700 mb-1'>
-                        Stripe Publishable Key
-                      </label>
-                      <div className='flex gap-2'>
-                        <div className='relative flex-1'>
-                          <input
-                            type={showPublishableKey ? 'text' : 'password'}
-                            value={stripeInfo.stripe_publishable_key}
-                            onChange={(e) =>
-                              setStripeInfo({
-                                ...stripeInfo,
-                                stripe_publishable_key: e.target.value,
-                              })
-                            }
-                            className='w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500'
-                            placeholder='pk_live_...'
-                          />
-                          <button
-                            type='button'
-                            onClick={() =>
-                              setShowPublishableKey(!showPublishableKey)
-                            }
-                            className='absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700'
-                          >
-                            {showPublishableKey ? (
-                              <EyeOff className='w-5 h-5' />
-                            ) : (
-                              <Eye className='w-5 h-5' />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                      <p className='text-xs text-gray-500 mt-1'>
-                        Starts with pk_live_ or pk_test_
-                      </p>
-                    </div>
-
-                    <div className='border-t pt-4 mt-6'>
-                      <h4 className='text-md font-semibold text-gray-800 mb-3'>
-                        Webhook Configuration
-                      </h4>
-                      <p className='text-sm text-gray-600 mb-4'>
-                        Configure webhooks in your{' '}
+                {paymentProvider === 'cashfree' && (
+                  <>
+                    {/* Cashfree Credentials */}
+                    <div className='bg-white rounded-lg border border-gray-200 p-6 mb-6'>
+                      <h3 className='text-lg font-semibold text-gray-800 mb-1'>Cashfree Configuration</h3>
+                      <p className='text-sm text-gray-500 mb-4'>
+                        Get your credentials from{' '}
                         <a
-                          href='https://dashboard.stripe.com/webhooks'
+                          href='https://merchant.cashfree.com/merchants/login'
                           target='_blank'
                           rel='noopener noreferrer'
                           className='text-blue-600 hover:underline'
                         >
-                          Stripe Dashboard
+                          Cashfree Dashboard
                         </a>{' '}
-                        to receive subscription updates.
+                        → Developers → API Keys.
                       </p>
 
-                      <div className='mb-4'>
-                        <label className='block text-sm font-medium text-gray-700 mb-1'>
-                          Your Webhook URL
-                        </label>
-                        <div className='flex gap-2'>
+                      <form onSubmit={handleCashfreeSubmit} className='space-y-4'>
+                        <div>
+                          <label className='block text-sm font-medium text-gray-700 mb-1'>App ID</label>
                           <input
                             type='text'
-                            value={webhookUrl}
-                            readOnly
-                            className='flex-1 px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-sm font-mono'
+                            value={cashfreeInfo.cashfree_app_id}
+                            onChange={(e) =>
+                              setCashfreeInfo({ ...cashfreeInfo, cashfree_app_id: e.target.value })
+                            }
+                            className='w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500'
+                            placeholder='TEST12345678...'
                           />
-                          <button
-                            type='button'
-                            onClick={() => copyToClipboard(webhookUrl, 'webhook')}
-                            className='px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 flex items-center gap-2'
-                          >
-                            {webhookUrlCopied ? (
-                              <>
-                                <Check className='w-4 h-4 text-green-600' />
-                                <span>Copied!</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className='w-4 h-4' />
-                                <span>Copy</span>
-                              </>
-                            )}
-                          </button>
+                          <p className='text-xs text-gray-500 mt-1'>
+                            Starts with TEST for sandbox, numeric for production
+                          </p>
                         </div>
-                      </div>
 
-                      <div className='bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4'>
-                        <p className='text-sm text-blue-800 font-medium mb-2'>
-                          📋 Setup Instructions:
+                        <div>
+                          <label className='block text-sm font-medium text-gray-700 mb-1'>Secret Key</label>
+                          <div className='relative'>
+                            <input
+                              type={showCashfreeSecret ? 'text' : 'password'}
+                              value={cashfreeInfo.cashfree_secret_key}
+                              onChange={(e) =>
+                                setCashfreeInfo({ ...cashfreeInfo, cashfree_secret_key: e.target.value })
+                              }
+                              className='w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500'
+                              placeholder='Your Cashfree secret key'
+                            />
+                            <button
+                              type='button'
+                              onClick={() => setShowCashfreeSecret(!showCashfreeSecret)}
+                              className='absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700'
+                            >
+                              {showCashfreeSecret ? (
+                                <EyeOff className='w-5 h-5' />
+                              ) : (
+                                <Eye className='w-5 h-5' />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        <button
+                          type='submit'
+                          disabled={loading}
+                          className='px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2'
+                        >
+                          {loading ? (
+                            <RefreshCw className='w-4 h-4 animate-spin' />
+                          ) : (
+                            <Check className='w-4 h-4' />
+                          )}
+                          Save Cashfree Credentials
+                        </button>
+                      </form>
+                    </div>
+                  </>
+                )}
+
+                {paymentProvider === 'stripe' && (
+                  <form onSubmit={handleStripeSubmit} className='space-y-6'>
+                  <div>
+                    <h3 className='text-lg font-semibold text-gray-800 mb-2'>
+                      Stripe Integration
+                    </h3>
+                    <p className='text-sm text-gray-600 mb-6'>
+                      Connect your Stripe account to accept payments. Get your API keys from your{' '}
+                      <a
+                        href='https://dashboard.stripe.com/apikeys'
+                        target='_blank'
+                        rel='noopener noreferrer'
+                        className='text-blue-600 hover:underline'
+                      >
+                        Stripe Dashboard
+                      </a>
+                      .
+                    </p>
+
+                    <div className='space-y-4'>
+                      <div>
+                        <label className='block text-sm font-medium text-gray-700 mb-1'>
+                          Stripe Secret Key
+                        </label>
+                        <div className='flex gap-2'>
+                          <div className='relative flex-1'>
+                            <input
+                              type={showSecretKey ? 'text' : 'password'}
+                              value={stripeInfo.stripe_secret_key}
+                              onChange={(e) =>
+                                setStripeInfo({
+                                  ...stripeInfo,
+                                  stripe_secret_key: e.target.value,
+                                })
+                              }
+                              className='w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500'
+                              placeholder='sk_live_...'
+                            />
+                            <button
+                              type='button'
+                              onClick={() => setShowSecretKey(!showSecretKey)}
+                              className='absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700'
+                            >
+                              {showSecretKey ? (
+                                <EyeOff className='w-5 h-5' />
+                              ) : (
+                                <Eye className='w-5 h-5' />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        <p className='text-xs text-gray-500 mt-1'>
+                          Starts with sk_live_ or sk_test_
                         </p>
-                        <ol className='text-sm text-blue-700 space-y-1 list-decimal list-inside'>
-                          <li>Copy the webhook URL above</li>
-                          <li>Go to Stripe Dashboard → Search Webhooks</li>
-                          <li>Click &quot;Add destination&quot;</li>
-                          <li>Select &quot;Your account&quot;</li>
-                          <li>Select events: checkout.session.completed, customer.subscription.created, customer.subscription.updated, customer.subscription.deleted, invoice.payment_succeeded, invoice.payment_failed</li>
-                          <li>Click &quot;continue&quot; and Select Webhook endpoint</li>
-                          <li>Enter the webhook URL</li>
-                          <li>Copy the &quot;Signing secret&quot; (starts with whsec_)</li>
-                          <li>Paste it below</li>
-                        </ol>
                       </div>
 
                       <div>
                         <label className='block text-sm font-medium text-gray-700 mb-1'>
-                          Webhook Signing Secret
+                          Stripe Publishable Key
                         </label>
-                        <div className='relative'>
-                          <input
-                            type={showWebhookSecret ? 'text' : 'password'}
-                            value={stripeInfo.stripe_webhook_secret}
-                            onChange={(e) =>
-                              setStripeInfo({
-                                ...stripeInfo,
-                                stripe_webhook_secret: e.target.value,
-                              })
-                            }
-                            className='w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500'
-                            placeholder='whsec_...'
-                          />
-                          <button
-                            type='button'
-                            onClick={() =>
-                              setShowWebhookSecret(!showWebhookSecret)
-                            }
-                            className='absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700'
-                          >
-                            {showWebhookSecret ? (
-                              <EyeOff className='w-5 h-5' />
-                            ) : (
-                              <Eye className='w-5 h-5' />
-                            )}
-                          </button>
+                        <div className='flex gap-2'>
+                          <div className='relative flex-1'>
+                            <input
+                              type={showPublishableKey ? 'text' : 'password'}
+                              value={stripeInfo.stripe_publishable_key}
+                              onChange={(e) =>
+                                setStripeInfo({
+                                  ...stripeInfo,
+                                  stripe_publishable_key: e.target.value,
+                                })
+                              }
+                              className='w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500'
+                              placeholder='pk_live_...'
+                            />
+                            <button
+                              type='button'
+                              onClick={() =>
+                                setShowPublishableKey(!showPublishableKey)
+                              }
+                              className='absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700'
+                            >
+                              {showPublishableKey ? (
+                                <EyeOff className='w-5 h-5' />
+                              ) : (
+                                <Eye className='w-5 h-5' />
+                              )}
+                            </button>
+                          </div>
                         </div>
                         <p className='text-xs text-gray-500 mt-1'>
-                          Starts with whsec_
+                          Starts with pk_live_ or pk_test_
                         </p>
                       </div>
-                    </div>
 
-                    {stripeInfo.stripe_secret_key && (
-                      <div className='pt-2'>
-                        <button
-                          type='button'
-                          onClick={testStripeConnection}
-                          disabled={testingStripe}
-                          className='flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50'
-                        >
-                          {testingStripe ? (
-                            <>
-                              <RefreshCw className='w-4 h-4 animate-spin' />
-                              Testing...
-                            </>
-                          ) : (
-                            <>
-                              <RefreshCw className='w-4 h-4' />
-                              Test Connection
-                            </>
-                          )}
-                        </button>
+                      <div className='border-t pt-4 mt-6'>
+                        <h4 className='text-md font-semibold text-gray-800 mb-3'>
+                          Webhook Configuration
+                        </h4>
+                        <p className='text-sm text-gray-600 mb-4'>
+                          Configure webhooks in your{' '}
+                          <a
+                            href='https://dashboard.stripe.com/webhooks'
+                            target='_blank'
+                            rel='noopener noreferrer'
+                            className='text-blue-600 hover:underline'
+                          >
+                            Stripe Dashboard
+                          </a>{' '}
+                          to receive subscription updates.
+                        </p>
 
-                        {stripeTestResult === 'success' && (
-                          <div className='mt-3 flex items-center gap-2 text-sm text-green-600'>
-                            <Check className='w-4 h-4' />
-                            <span>Connection successful!</span>
+                        <div className='mb-4'>
+                          <label className='block text-sm font-medium text-gray-700 mb-1'>
+                            Your Webhook URL
+                          </label>
+                          <div className='flex gap-2'>
+                            <input
+                              type='text'
+                              value={webhookUrl}
+                              readOnly
+                              className='flex-1 px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-sm font-mono'
+                            />
+                            <button
+                              type='button'
+                              onClick={() => copyToClipboard(webhookUrl, 'webhook')}
+                              className='px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 flex items-center gap-2'
+                            >
+                              {webhookUrlCopied ? (
+                                <>
+                                  <Check className='w-4 h-4 text-green-600' />
+                                  <span>Copied!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className='w-4 h-4' />
+                                  <span>Copy</span>
+                                </>
+                              )}
+                            </button>
                           </div>
-                        )}
+                        </div>
 
-                        {stripeTestResult === 'error' && (
-                          <div className='mt-3 flex items-center gap-2 text-sm text-red-600'>
-                            <X className='w-4 h-4' />
-                            <span>Connection failed. Check your keys.</span>
+                        <div className='bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4'>
+                          <p className='text-sm text-blue-800 font-medium mb-2'>
+                            📋 Setup Instructions:
+                          </p>
+                          <ol className='text-sm text-blue-700 space-y-1 list-decimal list-inside'>
+                            <li>Copy the webhook URL above</li>
+                            <li>Go to Stripe Dashboard → Search Webhooks</li>
+                            <li>Click &quot;Add destination&quot;</li>
+                            <li>Select &quot;Your account&quot;</li>
+                            <li>Select events: checkout.session.completed, customer.subscription.created, customer.subscription.updated, customer.subscription.deleted, invoice.payment_succeeded, invoice.payment_failed</li>
+                            <li>Click &quot;continue&quot; and Select Webhook endpoint</li>
+                            <li>Enter the webhook URL</li>
+                            <li>Copy the &quot;Signing secret&quot; (starts with whsec_)</li>
+                            <li>Paste it below</li>
+                          </ol>
+                        </div>
+
+                        <div>
+                          <label className='block text-sm font-medium text-gray-700 mb-1'>
+                            Webhook Signing Secret
+                          </label>
+                          <div className='relative'>
+                            <input
+                              type={showWebhookSecret ? 'text' : 'password'}
+                              value={stripeInfo.stripe_webhook_secret}
+                              onChange={(e) =>
+                                setStripeInfo({
+                                  ...stripeInfo,
+                                  stripe_webhook_secret: e.target.value,
+                                })
+                              }
+                              className='w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500'
+                              placeholder='whsec_...'
+                            />
+                            <button
+                              type='button'
+                              onClick={() =>
+                                setShowWebhookSecret(!showWebhookSecret)
+                              }
+                              className='absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700'
+                            >
+                              {showWebhookSecret ? (
+                                <EyeOff className='w-5 h-5' />
+                              ) : (
+                                <Eye className='w-5 h-5' />
+                              )}
+                            </button>
                           </div>
-                        )}
+                          <p className='text-xs text-gray-500 mt-1'>
+                            Starts with whsec_
+                          </p>
+                        </div>
                       </div>
-                    )}
+
+                      {stripeInfo.stripe_secret_key && (
+                        <div className='pt-2'>
+                          <button
+                            type='button'
+                            onClick={testStripeConnection}
+                            disabled={testingStripe}
+                            className='flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50'
+                          >
+                            {testingStripe ? (
+                              <>
+                                <RefreshCw className='w-4 h-4 animate-spin' />
+                                Testing...
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className='w-4 h-4' />
+                                Test Connection
+                              </>
+                            )}
+                          </button>
+
+                          {stripeTestResult === 'success' && (
+                            <div className='mt-3 flex items-center gap-2 text-sm text-green-600'>
+                              <Check className='w-4 h-4' />
+                              <span>Connection successful!</span>
+                            </div>
+                          )}
+
+                          {stripeTestResult === 'error' && (
+                            <div className='mt-3 flex items-center gap-2 text-sm text-red-600'>
+                              <X className='w-4 h-4' />
+                              <span>Connection failed. Check your keys.</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className='flex justify-end'>
-                  <button
-                    type='submit'
-                    disabled={loading}
-                    className='px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50'
-                  >
-                    {loading ? 'Saving...' : 'Save API Keys'}
-                  </button>
-                </div>
-              </form>
+                  <div className='flex justify-end'>
+                    <button
+                      type='submit'
+                      disabled={loading}
+                      className='px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50'
+                    >
+                      {loading ? 'Saving...' : 'Save API Keys'}
+                    </button>
+                  </div>
+                  </form>
+                )}
+              </>
             )}
 
             {/* WIDGET TAB */}
@@ -948,3 +1138,4 @@ export default function Settings() {
       </div>
   )
 }
+

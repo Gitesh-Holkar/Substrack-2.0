@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
 import { Plus, Check, Edit2, PauseCircle, ExternalLink } from 'lucide-react'
-import { StripeService } from '@/services/stripeService'
+import { PaymentService } from '@/services/paymentService'
 
 // Extended type to include active subscriber count
 interface PlanWithActiveCount {
@@ -20,6 +20,7 @@ interface PlanWithActiveCount {
   subscriber_count: number
   stripe_product_id?: string
   stripe_price_id?: string
+  archived_at?: string | null
   created_at: string
   updated_at: string
   active_subscriber_count?: number
@@ -39,6 +40,8 @@ export default function PlansPage() {
     price: '',
     billing_cycle: 'monthly',
     features: [''],
+    trial_period_days: 0,
+    billing_type: 'prepaid' as 'prepaid' | 'postpaid',
   })
   const [editFormData, setEditFormData] = useState({
     description: '',
@@ -113,6 +116,8 @@ export default function PlansPage() {
         billing_cycle: formData.billing_cycle,
         features: formData.features.filter((f) => f.trim() !== ''),
         is_active: true,
+        trial_period_days: formData.trial_period_days,
+        billing_type: formData.billing_type,
       }
 
       // Create new plan in Supabase
@@ -124,11 +129,12 @@ export default function PlansPage() {
 
       if (error) throw error
 
-      // Sync to Stripe if API keys are configured
-      if (merchant?.stripe_api_key && newPlan) {
+      // Sync to payment gateway if configured
+      const hasGateway = merchant?.stripe_api_key || (merchant as any)?.cashfree_app_id
+      if (hasGateway && newPlan) {
         try {
-          const stripeService = new StripeService()
-          await stripeService.syncPlanToStripe(
+          const paymentService = new PaymentService()
+          await paymentService.syncPlan(
             newPlan.id,
             formData.name,
             formData.description,
@@ -136,9 +142,9 @@ export default function PlansPage() {
             'INR',
             formData.billing_cycle
           )
-        } catch (stripeError) {
-          console.error('Failed to create plan in Stripe:', stripeError)
-          alert('Plan created locally, but failed to sync with Stripe. Please check your Stripe keys in Settings.')
+        } catch (syncError) {
+          console.error('Failed to sync plan with payment gateway:', syncError)
+          alert('Plan created locally, but failed to sync with payment gateway. Please check your gateway settings.')
         }
       }
 
@@ -217,6 +223,71 @@ export default function PlansPage() {
     }
   }
 
+  const archivePlan = async (plan: PlanWithActiveCount) => {
+    const hasActiveSubscribers = (plan.active_subscriber_count ?? 0) > 0
+
+    const confirmed = window.confirm(
+      hasActiveSubscribers
+        ? `This plan has ${plan.active_subscriber_count} active subscriber(s). Archiving will prevent new subscriptions but existing subscribers continue normally. Archive anyway?`
+        : 'Archive this plan? It cannot be reactivated. Archived plans can be deleted after 7 days.'
+    )
+    if (!confirmed) return
+
+    const { error } = await supabase
+      .from('subscription_plans')
+      .update({
+        is_active: false,
+        archived_at: new Date().toISOString(),
+      })
+      .eq('id', plan.id)
+
+    if (error) {
+      alert('Failed to archive plan: ' + error.message)
+    } else {
+      loadPlans()
+      alert('✅ Plan archived. Eligible for deletion in 7 days.')
+    }
+  }
+
+  const deletePlan = async (plan: PlanWithActiveCount) => {
+    if (!plan.archived_at) {
+      alert('Plan must be archived before it can be deleted.')
+      return
+    }
+
+    const archivedDate = new Date(plan.archived_at)
+    const daysSinceArchived = Math.floor(
+      (Date.now() - archivedDate.getTime()) / (1000 * 60 * 60 * 24)
+    )
+
+    if (daysSinceArchived < 7) {
+      alert(`Plan can be deleted in ${7 - daysSinceArchived} more day(s).`)
+      return
+    }
+
+    if ((plan.active_subscriber_count ?? 0) > 0) {
+      alert('Cannot delete a plan with active subscribers.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      '⚠️ Permanently delete this plan? This cannot be undone.'
+    )
+    if (!confirmed) return
+
+    const { error } = await supabase
+      .from('subscription_plans')
+      .delete()
+      .eq('id', plan.id)
+
+    if (error) {
+      alert('Failed to delete plan: ' + error.message)
+    } else {
+      loadPlans()
+      alert('✅ Plan permanently deleted.')
+    }
+  }
+
   const copyPaymentLink = (plan: PlanWithActiveCount) => {
     const baseUrl = window.location.origin
     const link = `${baseUrl}/subscribe/${plan.id}`
@@ -231,6 +302,8 @@ export default function PlansPage() {
       price: '',
       billing_cycle: 'monthly',
       features: [''],
+      trial_period_days: 0,
+      billing_type: 'prepaid',
     })
   }
 
@@ -281,8 +354,8 @@ export default function PlansPage() {
 
   return (
     <div>
-      {/* Stripe Warning */}
-      {!merchant?.stripe_api_key && (
+      {/* Payment Gateway Warning */}
+      {!merchant?.stripe_api_key && !(merchant as any)?.cashfree_app_id && (
         <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
           <div className="flex items-start">
             <svg
@@ -297,9 +370,9 @@ export default function PlansPage() {
               />
             </svg>
             <div className="ml-3">
-              <h3 className="text-sm font-medium text-yellow-800">Stripe not configured</h3>
+              <h3 className="text-sm font-medium text-yellow-800">Payment gateway not configured</h3>
               <p className="text-sm text-yellow-700 mt-1">
-                To accept payments, please configure your Stripe API keys in{' '}
+                To accept payments, please configure Stripe or Cashfree in{' '}
                 <a href="/settings" className="underline font-semibold">
                   Settings
                 </a>
@@ -351,10 +424,15 @@ export default function PlansPage() {
                       </span>
                     )}
                   </div>
-                  {plan.stripe_product_id && plan.is_active && (
+                  {plan.stripe_product_id && plan.is_active && !plan.archived_at && (
                     <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-green-700 bg-green-100 rounded-full mt-1">
                       <Check className="w-3 h-3 mr-1" />
                       Active & Synced
+                    </span>
+                  )}
+                  {plan.archived_at && (
+                    <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-600 bg-gray-200 rounded-full mt-1">
+                      Archived
                     </span>
                   )}
                 </div>
@@ -392,8 +470,39 @@ export default function PlansPage() {
                 {plan.active_subscriber_count || 0} Active Subscribers
               </p>
               
-              {/* Show Edit Button and Payment Link or Paused Message */}
-              {plan.is_active ? (
+              {/* Show archive/delete state actions */}
+              {plan.archived_at ? (
+                <div className="space-y-2">
+                  <div className="bg-gray-50 border border-gray-200 rounded-md p-3 mb-2">
+                    <p className="text-xs font-semibold text-gray-700 mb-1">Plan Archived</p>
+                    <p className="text-xs text-gray-500">
+                      No new subscriptions. Archived {new Date(plan.archived_at).toLocaleDateString()}.
+                    </p>
+                  </div>
+                  {(() => {
+                    const archivedDate = new Date(plan.archived_at!)
+                    const daysSince = Math.floor((Date.now() - archivedDate.getTime()) / (1000 * 60 * 60 * 24))
+                    const canDelete = daysSince >= 7 && (plan.active_subscriber_count ?? 0) === 0
+                    return (
+                      <button
+                        onClick={() => deletePlan(plan)}
+                        disabled={!canDelete}
+                        className={`w-full px-4 py-2 rounded-md font-semibold text-sm flex items-center justify-center transition-colors ${
+                          canDelete
+                            ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                            : 'bg-gray-50 text-gray-400 cursor-not-allowed'
+                        }`}
+                      >
+                        {canDelete
+                          ? 'Delete Plan'
+                          : daysSince < 7
+                          ? `Delete available in ${7 - daysSince} day(s)`
+                          : 'Has active subscribers'}
+                      </button>
+                    )
+                  })()}
+                </div>
+              ) : plan.is_active ? (
                 <div className="space-y-2">
                   <button
                     onClick={() => openEditModal(plan)}
@@ -402,7 +511,7 @@ export default function PlansPage() {
                     <Edit2 className="w-4 h-4 mr-2" />
                     Edit Plan
                   </button>
-                  {plan.stripe_price_id && merchant?.stripe_api_key && (
+                  {plan.is_active && (merchant?.stripe_api_key || (merchant as any)?.cashfree_app_id) && (
                     <button
                       onClick={() => copyPaymentLink(plan)}
                       className="w-full bg-green-50 text-green-700 px-4 py-2 rounded-md font-semibold text-sm hover:bg-green-100 flex items-center justify-center transition-colors"
@@ -411,23 +520,37 @@ export default function PlansPage() {
                       Copy Payment Link
                     </button>
                   )}
+                  <button
+                    onClick={() => archivePlan(plan)}
+                    className="w-full bg-gray-50 text-gray-600 px-4 py-2 rounded-md font-semibold text-sm hover:bg-gray-100 flex items-center justify-center transition-colors"
+                  >
+                    Archive Plan
+                  </button>
                 </div>
               ) : (
-                <div className="bg-orange-50 border border-orange-200 rounded-md p-3">
-                  <div className="flex items-start">
-                    <PauseCircle className="w-5 h-5 text-orange-600 mr-2 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <p className="text-xs font-semibold text-orange-800 mb-1">
-                        Plan Temporarily Paused
-                      </p>
-                      <p className="text-xs text-orange-700">
-                        New subscribers cannot sign up. Existing subscribers continue with normal access and auto-renewal.
-                      </p>
-                      <p className="text-xs text-orange-600 mt-2 font-medium">
-                        Toggle ON to allow new subscriptions
-                      </p>
+                <div className="space-y-2">
+                  <div className="bg-orange-50 border border-orange-200 rounded-md p-3">
+                    <div className="flex items-start">
+                      <PauseCircle className="w-5 h-5 text-orange-600 mr-2 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-semibold text-orange-800 mb-1">
+                          Plan Temporarily Paused
+                        </p>
+                        <p className="text-xs text-orange-700">
+                          New subscribers cannot sign up. Existing subscribers continue normally.
+                        </p>
+                        <p className="text-xs text-orange-600 mt-2 font-medium">
+                          Toggle ON to allow new subscriptions
+                        </p>
+                      </div>
                     </div>
                   </div>
+                  <button
+                    onClick={() => archivePlan(plan)}
+                    className="w-full bg-gray-50 text-gray-600 px-4 py-2 rounded-md font-semibold text-sm hover:bg-gray-100 flex items-center justify-center transition-colors"
+                  >
+                    Archive Plan
+                  </button>
                 </div>
               )}
             </div>
@@ -523,6 +646,87 @@ export default function PlansPage() {
                       <option value="yearly">Yearly</option>
                       <option value="quarterly">Quarterly</option>
                     </select>
+                  </div>
+                </div>
+                {/* Trial Period */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Trial Period <span className="text-gray-400 font-normal">(optional)</span>
+                  </label>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {[
+                      { label: 'No Trial', days: 0 },
+                      { label: '7 Days', days: 7 },
+                      { label: '15 Days', days: 15 },
+                      { label: '1 Month', days: 30 },
+                      { label: '3 Months', days: 90 },
+                      { label: '6 Months', days: 180 },
+                    ].map((option) => (
+                      <button
+                        key={option.days}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, trial_period_days: option.days })}
+                        className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${
+                          formData.trial_period_days === option.days
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="365"
+                      value={formData.trial_period_days}
+                      onChange={(e) =>
+                        setFormData({ ...formData, trial_period_days: parseInt(e.target.value) || 0 })
+                      }
+                      className="w-24 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                      placeholder="0"
+                    />
+                    <span className="text-sm text-gray-500">custom days</span>
+                  </div>
+                  {formData.trial_period_days > 0 && (
+                    <p className="text-xs text-blue-600 mt-1">
+                      First charge on day {formData.trial_period_days + 1} after subscription starts
+                    </p>
+                  )}
+                </div>
+
+                {/* Billing Type */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Billing Type
+                  </label>
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, billing_type: 'prepaid' })}
+                      className={`flex-1 py-2.5 px-4 rounded-lg border-2 text-sm font-medium transition-colors ${
+                        formData.billing_type === 'prepaid'
+                          ? 'border-blue-600 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="font-semibold">Prepaid</div>
+                      <div className="text-xs font-normal opacity-75">Charge at start of cycle</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, billing_type: 'postpaid' })}
+                      className={`flex-1 py-2.5 px-4 rounded-lg border-2 text-sm font-medium transition-colors ${
+                        formData.billing_type === 'postpaid'
+                          ? 'border-blue-600 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="font-semibold">Postpaid</div>
+                      <div className="text-xs font-normal opacity-75">Charge at end of cycle</div>
+                    </button>
                   </div>
                 </div>
                 <div>

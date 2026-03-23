@@ -1,10 +1,9 @@
-// supabase/functions/stripe-webhook/index.ts
-//
-// Receives Stripe webhook events, verifies signature,
+
+// Receives webhook events from Cashfree, verifies signature,
 // parses into NormalizedEvent, delegates to shared handlers.
 //
-// All business logic (subscriber creation, payments, emails, PDF)
-// lives in _shared/subscriptionHandlers.ts
+// Cashfree webhook signature header: x-webhook-signature
+// Signature: Base64(HMAC-SHA256(timestamp + raw body, merchant's cashfree_secret_key))
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -18,10 +17,11 @@ const supabase = createClient(
 )
 
 serve(async (req) => {
-  const signature = req.headers.get('stripe-signature')
+  const signature = req.headers.get('x-webhook-signature')
+  const timestamp = req.headers.get('x-webhook-timestamp') ?? ''
 
   if (!signature) {
-    console.error('No Stripe signature provided')
+    console.error('No Cashfree signature provided')
     return new Response('No signature', { status: 400 })
   }
 
@@ -35,49 +35,54 @@ serve(async (req) => {
     return new Response('Invalid JSON body', { status: 400 })
   }
 
-  console.log('Stripe event type:', parsedBody.type)
+  console.log('Cashfree event type:', parsedBody.type)
 
   // ---------------------------------------------------------------------------
   // Resolve merchant_id from the webhook payload.
-  // Stripe embeds merchant_id in metadata on both the session and subscription.
-  // Falls back to DB lookup via stripe_subscription_id for invoice events.
+  // Cashfree embeds subscription_tags in the payload which contains our IDs.
+  // Fall back to DB lookup via cf_subscription_id if tags are missing.
   // ---------------------------------------------------------------------------
   let merchantId: string | null = null
+  let fallbackPlanId: string | null = null
 
-  const obj = (parsedBody.data as Record<string, unknown>)?.object as Record<string, unknown> | undefined
+  const data = parsedBody.data as Record<string, unknown> | undefined
 
-  // Checkout session / subscription metadata
-  merchantId = (obj?.metadata as Record<string, string> | undefined)?.merchant_id ?? null
-
-  // subscription_data.metadata on checkout sessions
-  if (!merchantId) {
-    const subDataMeta = (obj?.subscription_data as Record<string, unknown> | undefined)?.metadata as Record<string, string> | undefined
-    merchantId = subDataMeta?.merchant_id ?? null
+  // Try subscription_tags first (set during createSubscription)
+  const tags = (data?.subscription_details as Record<string, unknown>)?.subscription_tags as Record<string, string> | undefined
+  if (tags?.merchant_id) {
+    merchantId = tags.merchant_id
   }
 
-  // Invoice line item metadata
+ // Fall back: look up by cf_subscription_id in our DB.
+  // Location differs by event type:
+  //   SUBSCRIPTION_STATUS_CHANGED → data.subscription_details.cf_subscription_id
+  //   SUBSCRIPTION_PAYMENT_SUCCESS/FAILED/CANCELLED → data.cf_subscription_id
   if (!merchantId) {
-    const lines = (obj?.lines as Record<string, unknown> | undefined)?.data as Record<string, unknown>[] | undefined
-    merchantId = (lines?.[0]?.metadata as Record<string, string> | undefined)?.merchant_id ?? null
-  }
+    const subDetails = data?.subscription_details as Record<string, unknown> | undefined
+    const cfSubId = (
+      subDetails?.cf_subscription_id ??
+      data?.cf_subscription_id
+    ) as string | undefined
 
-  // Fall back: look up by stripe_subscription_id in DB
-  if (!merchantId) {
-    const subscriptionId = obj?.subscription as string | undefined
-    if (subscriptionId) {
+    if (cfSubId) {
+      console.log('Fallback lookup for cf_subscription_id:', cfSubId)
       const { data: subscriber } = await supabase
         .from('subscribers')
-        .select('merchant_id')
-        .eq('stripe_subscription_id', subscriptionId)
+        .select('merchant_id, plan_id')
+        .eq('provider_subscription_id', String(cfSubId))
         .limit(1)
         .single()
 
-      if (subscriber) merchantId = subscriber.merchant_id
+      if (subscriber) {
+        merchantId = subscriber.merchant_id
+        fallbackPlanId = subscriber.plan_id
+      }
     }
   }
 
   if (!merchantId) {
-    console.error('No merchant_id found in Stripe webhook')
+    console.error('No merchant_id found in Cashfree webhook')
+    // Return 200 to prevent Cashfree from retrying unresolvable events
     return new Response(JSON.stringify({ received: true }), {
       headers: { 'Content-Type': 'application/json' },
       status: 200,
@@ -85,7 +90,7 @@ serve(async (req) => {
   }
 
   // ---------------------------------------------------------------------------
-  // Fetch full merchant row
+  // Fetch merchant
   // ---------------------------------------------------------------------------
   const { data: merchant, error: merchantError } = await supabase
     .from('merchants')
@@ -99,29 +104,29 @@ serve(async (req) => {
     .eq('id', merchantId)
     .single()
 
-  if (merchantError || !merchant?.stripe_api_key) {
-    console.error('Merchant not found or Stripe key missing:', merchantId)
+  if (merchantError || !merchant) {
+    console.error('Merchant not found:', merchantId)
     return new Response('Merchant not found', { status: 400 })
   }
 
-  if (!merchant.stripe_webhook_secret) {
-    console.error('Stripe webhook secret not configured:', merchantId)
-    return new Response('Webhook secret not configured', { status: 400 })
+  if (!merchant.cashfree_secret_key) {
+    console.error('Cashfree secret key not configured for merchant:', merchantId)
+    return new Response('Cashfree not configured', { status: 400 })
   }
 
   // ---------------------------------------------------------------------------
   // Verify signature
   // ---------------------------------------------------------------------------
   const provider = getProvider(merchant as Merchant)
-
   const isValid = await provider.verifyWebhookSignature(
     body,
     signature,
-    merchant.stripe_webhook_secret,
+    merchant.cashfree_secret_key!,
+    timestamp,
   )
 
   if (!isValid) {
-    console.error('Invalid Stripe webhook signature for merchant:', merchantId)
+    console.error('Invalid Cashfree webhook signature for merchant:', merchantId)
     return new Response('Invalid signature', { status: 400 })
   }
 
@@ -129,12 +134,27 @@ serve(async (req) => {
   // Parse and handle
   // ---------------------------------------------------------------------------
   try {
-    const normalizedEvent = await provider.parseWebhookEvent(parsedBody)
+    let normalizedEvent = await provider.parseWebhookEvent(parsedBody)
     console.log('Normalized event:', normalizedEvent.type)
+
+    // When Cashfree returns null subscription_tags, merchantId/planId are empty strings.
+    // Override them with values from the pending subscriber row we stored earlier.
+    if (
+      normalizedEvent.type === 'subscription.activated' &&
+      (!normalizedEvent.merchantId || !normalizedEvent.planId)
+    ) {
+      normalizedEvent = {
+        ...normalizedEvent,
+        merchantId: normalizedEvent.merchantId || merchantId || '',
+        planId: normalizedEvent.planId || fallbackPlanId || '',
+      }
+    }
+
     await handleNormalizedEvent(normalizedEvent, merchant as Merchant, supabase)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
-    console.error('Error handling Stripe event:', message)
+    console.error('Error handling Cashfree event:', message)
+    // Still return 200 — event was received, internal error should not trigger retry
     return new Response(JSON.stringify({ received: true, error: message }), {
       headers: { 'Content-Type': 'application/json' },
       status: 200,
