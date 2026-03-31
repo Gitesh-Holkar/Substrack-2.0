@@ -14,6 +14,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react'
 import Image from 'next/image'
+import { ApiKeysTab } from '@/components/dashboard/ApiKeysTab'
 
 interface StripeConstructor {
   new (apiKey: string, config: { apiVersion: string; httpClient?: unknown }): {
@@ -31,7 +32,7 @@ interface MerchantPaymentConfig {
 
 export default function Settings() {
   const { user, merchant, refreshMerchant } = useAuth()
-  const [activeTab, setActiveTab] = useState('business')
+  const [activeTab, setActiveTab] = useState<'business' | 'stripe' | 'widget' | 'api-keys'>('business')
   const [showSecretKey, setShowSecretKey] = useState(false)
   const [showPublishableKey, setShowPublishableKey] = useState(false)
   const [showWebhookSecret, setShowWebhookSecret] = useState(false)
@@ -440,6 +441,16 @@ export default function Settings() {
                 }`}
               >
                 Widget Integration
+              </button>
+              <button
+                onClick={() => setActiveTab('api-keys')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'api-keys'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                API Keys
               </button>
             </nav>
           </div>
@@ -1133,9 +1144,11 @@ export default function Settings() {
                 </div>
               </div>
             )}
+
+            {/* API KEYS TAB */}
+            {activeTab === 'api-keys' && <ApiKeysTab />}
           </div>
         </div>
       </div>
   )
 }
-
