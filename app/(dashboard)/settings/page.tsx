@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -14,7 +14,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react'
 import Image from 'next/image'
-import { ApiKeysTab } from '@/components/dashboard/ApiKeysTab'
+import { IntegrationsTab } from '@/components/dashboard/IntegrationsTab'
 
 interface StripeConstructor {
   new (apiKey: string, config: { apiVersion: string; httpClient?: unknown }): {
@@ -32,7 +32,7 @@ interface MerchantPaymentConfig {
 
 export default function Settings() {
   const { user, merchant, refreshMerchant } = useAuth()
-  const [activeTab, setActiveTab] = useState<'business' | 'stripe' | 'widget' | 'api-keys'>('business')
+  const [activeTab, setActiveTab] = useState<'business' | 'stripe' | 'integrations'>('business')
   const [showSecretKey, setShowSecretKey] = useState(false)
   const [showPublishableKey, setShowPublishableKey] = useState(false)
   const [showWebhookSecret, setShowWebhookSecret] = useState(false)
@@ -41,11 +41,9 @@ export default function Settings() {
   const [testingStripe, setTestingStripe] = useState(false)
   const [stripeTestResult, setStripeTestResult] = useState<'success' | 'error' | null>(null)
   const [webhookUrlCopied, setWebhookUrlCopied] = useState(false)
-  const [sdkCodeCopied, setSdkCodeCopied] = useState(false)
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
   const [uploadingLogo, setUploadingLogo] = useState(false)
-  const [redirectUrl, setRedirectUrl] = useState('')
   const [cashfreeInfo, setCashfreeInfo] = useState({
     cashfree_app_id: '',
     cashfree_secret_key: '',
@@ -58,7 +56,6 @@ export default function Settings() {
   const [webhookUrl, setWebhookUrl] = useState('')
 
   const supabase = createClient()
-  const sdkUrl = 'https://substrack-yags.vercel.app/substrack-sdk.js'
 
   // ✅ FIX #1: Set webhook URL client-side only
   useEffect(() => {
@@ -70,37 +67,6 @@ export default function Settings() {
       setWebhookUrl(url)
     }
   }, [])
-
-  // ✅ FIX #2: SDK code with proper memoization
-  const sdkCode = useMemo(() => {
-    const merchantId = user?.id || 'YOUR_MERCHANT_ID'
-    return `<!-- Step 1: Add SDK Script -->
-<script src="${sdkUrl}"></script>
-
-<script>
-  // Step 2: Initialize SDK with YOUR Merchant ID
-  const substrack = new Substrack();
-  substrack.init('${merchantId}');
-
-  // Step 3: Check Subscription After User Login
-  async function checkUserSubscription() {
-    const userEmail = getCurrentUserEmail(); // Replace with your method
-    const hasSubscription = await substrack.checkSubscription(userEmail);
-    
-    if (hasSubscription) {
-      console.log('Plan:', substrack.getPlan());
-      document.getElementById('premium-content').style.display = 'block';
-      document.getElementById('subscribe-btn').style.display = 'none';
-    } else {
-      document.getElementById('premium-content').style.display = 'none';
-      document.getElementById('subscribe-btn').style.display = 'block';
-    }
-  }
-
-  // Call after user login
-  checkUserSubscription();
-</script>`
-  }, [user?.id, sdkUrl])
 
   const [businessInfo, setBusinessInfo] = useState({
     full_name: '',
@@ -142,7 +108,6 @@ export default function Settings() {
       })
       setPaymentProvider(merchantPaymentConfig.payment_provider || 'stripe')
       setLogoPreview(merchant.logo_url || null)
-      setRedirectUrl((merchant as { redirect_url?: string }).redirect_url || '')
     }
   }, [merchant])
 
@@ -271,15 +236,10 @@ export default function Settings() {
     }
   }
 
-  const copyToClipboard = (text: string, type: 'webhook' | 'sdk') => {
+  const copyToClipboard = (text: string): void => {
     navigator.clipboard.writeText(text)
-    if (type === 'webhook') {
-      setWebhookUrlCopied(true)
-      setTimeout(() => setWebhookUrlCopied(false), 2000)
-    } else {
-      setSdkCodeCopied(true)
-      setTimeout(() => setSdkCodeCopied(false), 2000)
-    }
+    setWebhookUrlCopied(true)
+    setTimeout(() => setWebhookUrlCopied(false), 2000)
   }
 
   const handleStripeSubmit = async (e: React.FormEvent) => {
@@ -375,33 +335,8 @@ export default function Settings() {
     }
   }
 
-  const handleRedirectUrlSave = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setSuccessMessage('')
-
-    try {
-      const { error } = await supabase
-        .from('merchants')
-        .update({ redirect_url: redirectUrl })
-        .eq('id', user!.id)
-
-      if (error) throw error
-
-      await refreshMerchant()
-      setSuccessMessage('Redirect URL saved successfully!')
-
-      setTimeout(() => setSuccessMessage(''), 3000)
-    } catch (error) {
-      console.error('Error saving redirect URL:', error)
-      alert('Failed to save redirect URL')
-    } finally {
-      setLoading(false)
-    }
-  }
-
   return (
-      <div className='max-w-4xl'>
+      <div className='w-full max-w-5xl'>
         {successMessage && (
           <div className='mb-6 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-md flex items-center'>
             <Check className='w-5 h-5 mr-2' />
@@ -433,24 +368,14 @@ export default function Settings() {
                 Payment Setup
               </button>
               <button
-                onClick={() => setActiveTab('widget')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'widget'
+                onClick={() => setActiveTab('integrations')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
+                  activeTab === 'integrations'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
-                Widget Integration
-              </button>
-              <button
-                onClick={() => setActiveTab('api-keys')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'api-keys'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                API Keys
+                Integrations
               </button>
             </nav>
           </div>
@@ -885,7 +810,7 @@ export default function Settings() {
                             />
                             <button
                               type='button'
-                              onClick={() => copyToClipboard(webhookUrl, 'webhook')}
+                              onClick={() => copyToClipboard(webhookUrl)}
                               className='px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 flex items-center gap-2'
                             >
                               {webhookUrlCopied ? (
@@ -1009,144 +934,8 @@ export default function Settings() {
               </>
             )}
 
-            {/* WIDGET TAB */}
-            {activeTab === 'widget' && (
-              <div className='space-y-6'>
-                <div>
-                  <h3 className='text-lg font-semibold text-gray-800 mb-2'>
-                    Widget Integration
-                  </h3>
-                  <p className='text-sm text-gray-600 mb-6'>
-                    Integrate subscription management into your website with our JavaScript SDK
-                  </p>
-
-                  <div className='bg-linear-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-6 mb-6'>
-                    <div className='flex items-start justify-between'>
-                      <div className='flex-1'>
-                        <h4 className='text-md font-semibold text-blue-900 mb-2 flex items-center'>
-                          <svg
-                            className='w-5 h-5 mr-2'
-                            fill='none'
-                            viewBox='0 0 24 24'
-                            stroke='currentColor'
-                          >
-                            <path
-                              strokeLinecap='round'
-                              strokeLinejoin='round'
-                              strokeWidth={2}
-                              d='M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'
-                            />
-                          </svg>
-                          Your Merchant ID
-                        </h4>
-                        <p className='text-sm text-blue-700 mb-3'>
-                          Use this ID to initialize the SDK on your website
-                        </p>
-                        <div className='flex items-center gap-2'>
-                          <code className='flex-1 px-4 py-3 bg-white border border-blue-300 rounded-md text-sm font-mono text-blue-900 select-all'>
-                            {user?.id}
-                          </code>
-                          <button
-                            type='button'
-                            onClick={() => {
-                              navigator.clipboard.writeText(user?.id || '')
-                              alert('Merchant ID copied to clipboard!')
-                            }}
-                            className='px-4 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2 transition-colors'
-                          >
-                            <Copy className='w-4 h-4' />
-                            Copy
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className='bg-white rounded-lg border border-gray-200 p-6 mb-6'>
-                    <form onSubmit={handleRedirectUrlSave} className='space-y-4'>
-                      <div>
-                        <label className='block text-sm font-medium text-gray-700 mb-2'>
-                          Redirect URL <span className='text-gray-500'>(Optional)</span>
-                        </label>
-                        <p className='text-xs text-gray-500 mb-2'>
-                          Where should customers land after completing payment? Leave empty to use default success page.
-                        </p>
-                        <input
-                          type='url'
-                          value={redirectUrl}
-                          onChange={(e) => setRedirectUrl(e.target.value)}
-                          placeholder='https://yourwebsite.com/dashboard'
-                          className='w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500'
-                        />
-                      </div>
-
-                      <button
-                        type='submit'
-                        disabled={loading}
-                        className='px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center'
-                      >
-                        {loading ? (
-                          <>
-                            <RefreshCw className='w-4 h-4 mr-2 animate-spin' />
-                            Saving...
-                          </>
-                        ) : (
-                          'Save Redirect URL'
-                        )}
-                      </button>
-                    </form>
-                  </div>
-
-                  <div className='bg-white rounded-lg border border-gray-200 p-6'>
-                    <h4 className='text-md font-semibold text-gray-800 mb-3 flex items-center'>
-                      <svg
-                        className='w-5 h-5 mr-2 text-blue-600'
-                        fill='none'
-                        viewBox='0 0 24 24'
-                        stroke='currentColor'
-                      >
-                        <path
-                          strokeLinecap='round'
-                          strokeLinejoin='round'
-                          strokeWidth={2}
-                          d='M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4'
-                        />
-                      </svg>
-                      SDK Integration Code
-                    </h4>
-                    <p className='text-sm text-gray-600 mb-4'>
-                      Copy and paste this code into your website. Works with <strong>any authentication system</strong> (Firebase, Auth0, Supabase, Custom, etc.)
-                    </p>
-
-                    <div className='relative'>
-                      <pre className='bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto text-sm leading-relaxed'>
-                        <code>{sdkCode}</code>
-                      </pre>
-                      <button
-                        type='button'
-                        onClick={() => copyToClipboard(sdkCode, 'sdk')}
-                        className='absolute top-3 right-3 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded flex items-center gap-1 transition-colors'
-                      >
-                        {sdkCodeCopied ? (
-                          <>
-                            <Check className='w-3 h-3' />
-                            Copied!
-                          </>
-                        ) : (
-                          <>
-                            <Copy className='w-3 h-3' />
-                            Copy Code
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* API KEYS TAB */}
-            {activeTab === 'api-keys' && <ApiKeysTab />}
+            {/* INTEGRATIONS TAB */}
+            {activeTab === 'integrations' && <IntegrationsTab />}
           </div>
         </div>
       </div>
