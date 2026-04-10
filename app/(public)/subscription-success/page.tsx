@@ -1,9 +1,10 @@
 'use client'
 
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Check, ArrowRight } from 'lucide-react';
 
-export default function SubscriptionSuccessPage() {
+function SubscriptionSuccessContent() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get('session_id');
   const merchantName = searchParams.get('merchant');
@@ -58,5 +59,19 @@ export default function SubscriptionSuccessPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function SubscriptionSuccessPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+          <div className="animate-pulse text-gray-400">Loading...</div>
+        </div>
+      }
+    >
+      <SubscriptionSuccessContent />
+    </Suspense>
   );
 }
