@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
-import { Plus, Check, Edit2, PauseCircle, ExternalLink } from 'lucide-react'
+import { Plus, Check, Edit2, PauseCircle, ExternalLink, Sparkles, Loader2 } from 'lucide-react'
 import { PaymentService } from '@/services/paymentService'
 
 // Extended type to include active subscriber count
@@ -50,12 +50,115 @@ export default function PlansPage() {
     features: [''],
   })
 
+  // AI badge data — fetched from merchant_ai_context.badge_data
+  const [badgeData, setBadgeData] = useState<Record<string, { state: string; tooltip: string }>>({})
+
+  // AI plan suggestion state
+  const [aiSuggestLoading, setAiSuggestLoading] = useState(false)
+  const [aiSuggestions, setAiSuggestions] = useState<Array<{
+    name: string
+    description: string
+    price: number
+    billing_cycle: string
+    trial_period_days: number
+    features: string[]
+    positioning: string
+  }> | null>(null)
+  const [aiSuggestError, setAiSuggestError] = useState<string | null>(null)
+  const [profileReady, setProfileReady] = useState<boolean | null>(null) // null = not checked yet
+
   useEffect(() => {
     if (user) {
       loadPlans()
+      loadBadgeData()
+      checkProfile()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
+
+  const loadBadgeData = async (): Promise<void> => {
+    try {
+      const res = await fetch('/api/ai/context', { method: 'POST' })
+      if (!res.ok) return
+      // Fetch badge_data from merchant_ai_context via the client
+      const { data: contextRow } = await supabase
+        .from('merchant_ai_context')
+        .select('badge_data')
+        .eq('merchant_id', user!.id)
+        .single()
+      if (contextRow?.badge_data) {
+        setBadgeData(contextRow.badge_data as Record<string, { state: string; tooltip: string }>)
+      }
+    } catch {
+      // Badge data is non-critical — do not surface errors
+    }
+  }
+
+  const checkProfile = async (): Promise<void> => {
+    try {
+      const res = await fetch('/api/ai/profile')
+      if (res.ok) {
+        const data = await res.json() as { data?: { onboarding_completed?: boolean; business_description?: string } | null }
+        const ready = !!(data.data?.onboarding_completed && data.data?.business_description)
+        setProfileReady(ready)
+      } else {
+        setProfileReady(false)
+      }
+    } catch {
+      setProfileReady(false)
+    }
+  }
+
+  const handleGenerateWithAi = async (): Promise<void> => {
+    setAiSuggestLoading(true)
+    setAiSuggestions(null)
+    setAiSuggestError(null)
+    try {
+      const res = await fetch('/api/ai/suggest-plans', { method: 'POST' })
+      const data = await res.json() as {
+        data?: Array<{
+          name: string
+          description: string
+          price: number
+          billing_cycle: string
+          trial_period_days: number
+          features: string[]
+          positioning: string
+        }>
+        error?: string
+      }
+      if (res.ok && data.data) {
+        setAiSuggestions(data.data)
+      } else {
+        setAiSuggestError(data.error ?? 'Failed to generate suggestions. Please try again.')
+      }
+    } catch {
+      setAiSuggestError('AI service temporarily unavailable. Please try again.')
+    } finally {
+      setAiSuggestLoading(false)
+    }
+  }
+
+  const applyAiSuggestion = (suggestion: {
+    name: string
+    description: string
+    price: number
+    billing_cycle: string
+    trial_period_days: number
+    features: string[]
+  }): void => {
+    setFormData({
+      name: suggestion.name,
+      description: suggestion.description,
+      price: String(suggestion.price),
+      billing_cycle: suggestion.billing_cycle,
+      features: suggestion.features.length > 0 ? suggestion.features : [''],
+      trial_period_days: suggestion.trial_period_days,
+      billing_type: 'prepaid',
+    })
+    setAiSuggestions(null)
+    setAiSuggestError(null)
+  }
 
   const loadPlans = async () => {
     try {
@@ -452,13 +555,35 @@ export default function PlansPage() {
             <div>
               <div className="flex justify-between items-start mb-4">
                 <div className="flex-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="text-lg font-bold text-gray-800">{plan.name}</h3>
                     {!plan.is_active && !plan.archived_at && (
                       <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-orange-700 bg-orange-100 rounded-full">
                         <PauseCircle className="w-3 h-3 mr-1" />
                         Paused
                       </span>
+                    )}
+                    {badgeData[plan.id] && (
+                      <div className="relative group">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium cursor-default ${
+                          badgeData[plan.id].state === 'growing' ? 'bg-green-100 text-green-700' :
+                          badgeData[plan.id].state === 'high_churn' ? 'bg-amber-100 text-amber-700' :
+                          badgeData[plan.id].state === 'needs_attention' ? 'bg-red-100 text-red-700' :
+                          badgeData[plan.id].state === 'new' ? 'bg-blue-100 text-blue-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>
+                          <Sparkles className="w-2.5 h-2.5 mr-1" />
+                          {badgeData[plan.id].state === 'growing' && 'Growing'}
+                          {badgeData[plan.id].state === 'high_churn' && 'High Churn'}
+                          {badgeData[plan.id].state === 'needs_attention' && 'Needs Attention'}
+                          {badgeData[plan.id].state === 'new' && 'New'}
+                          {badgeData[plan.id].state === 'stable' && 'Stable'}
+                        </span>
+                        <div className="absolute left-0 top-7 w-56 bg-gray-900 text-white text-xs rounded-lg px-3 py-2 hidden group-hover:block z-10 shadow-lg">
+                          {badgeData[plan.id].tooltip}
+                          <div className="absolute -top-1 left-3 w-2 h-2 bg-gray-900 rotate-45"></div>
+                        </div>
+                      </div>
                     )}
                   </div>
                   {plan.stripe_product_id && plan.is_active && !plan.archived_at && (
@@ -622,6 +747,118 @@ export default function PlansPage() {
               <h2 className="text-2xl font-bold text-gray-800 mb-4">
                 Create New Plan
               </h2>
+
+              {/* GIWI AI Plan Generation Banner */}
+              <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 flex-shrink-0">
+                      <Sparkles className="w-3.5 h-3.5 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-blue-900">Generate with GIWI</p>
+                      <p className="text-xs text-blue-700">Let AI suggest plans based on your business</p>
+                    </div>
+                  </div>
+                  {profileReady === false ? (
+                    <a
+                      href="/settings"
+                      className="flex-shrink-0 text-xs font-medium text-blue-600 hover:text-blue-700 underline"
+                    >
+                      Set up profile first →
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void handleGenerateWithAi()}
+                      disabled={aiSuggestLoading}
+                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                    >
+                      {aiSuggestLoading ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Generate
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+
+                {/* Profile not ready message */}
+                {profileReady === false && (
+                  <div className="border-t border-blue-200 px-4 py-3 bg-white">
+                    <p className="text-xs text-gray-600">
+                      GIWI needs to know about your business to suggest relevant plans.{' '}
+                      <a href="/settings" className="text-blue-600 font-medium hover:underline">
+                        Go to Settings → AI Assistant
+                      </a>{' '}
+                      and fill in your business profile first.
+                    </p>
+                  </div>
+                )}
+
+                {/* Error state */}
+                {aiSuggestError && (
+                  <div className="border-t border-red-200 px-4 py-3 bg-red-50">
+                    <p className="text-xs text-red-700">{aiSuggestError}</p>
+                  </div>
+                )}
+
+                {/* Loading skeleton */}
+                {aiSuggestLoading && (
+                  <div className="border-t border-blue-200 px-4 py-4 space-y-3 bg-white">
+                    <p className="text-xs text-gray-500 mb-2">GIWI is designing plans for your business...</p>
+                    {[1, 2, 3].map(i => (
+                      <div key={i} className="h-16 bg-gray-100 rounded-lg animate-pulse" />
+                    ))}
+                  </div>
+                )}
+
+                {/* Suggestions */}
+                {aiSuggestions && !aiSuggestLoading && (
+                  <div className="border-t border-blue-200 bg-white">
+                    <p className="text-xs text-gray-500 px-4 pt-3 pb-2">
+                      Select a plan to populate the form. You can edit any field before creating.
+                    </p>
+                    <div className="space-y-2 px-4 pb-4">
+                      {aiSuggestions.map((suggestion, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => applyAiSuggestion(suggestion)}
+                          className="w-full text-left rounded-lg border border-gray-200 p-3 hover:border-blue-400 hover:bg-blue-50 transition-all group"
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-semibold text-gray-800 group-hover:text-blue-700">
+                              {suggestion.name}
+                            </span>
+                            <span className="text-sm font-bold text-blue-600">
+                              ₹{suggestion.price}/{suggestion.billing_cycle}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500 mb-1.5">{suggestion.positioning}</p>
+                          <div className="flex flex-wrap gap-1">
+                            {suggestion.features.slice(0, 3).map((f, fi) => (
+                              <span key={fi} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                                {f}
+                              </span>
+                            ))}
+                            {suggestion.features.length > 3 && (
+                              <span className="text-xs text-gray-400">+{suggestion.features.length - 3} more</span>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">

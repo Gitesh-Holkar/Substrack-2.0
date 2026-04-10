@@ -130,3 +130,153 @@ export interface PaymentTransaction {
   payment_date: string
   created_at: string
 }
+
+// -----------------------------------------------------------------------------
+// MerchantAiProfile — GIWI business profile and conversation memory
+// One row per merchant. Written by merchant via settings. Read by GIWI on every request.
+// -----------------------------------------------------------------------------
+export type GiwiLanguage = 'english' | 'hinglish'
+export type GiwiBusinessType = 'saas' | 'agency' | 'consultancy' | 'professional_service' | 'other'
+
+export interface GiwiMemoryEntry {
+  type: 'intention' | 'fact'
+  text: string
+  created_at: string
+  expires_at?: string // only for intentions (60-day rolling expiry)
+}
+
+export interface MerchantAiProfile {
+  id: string
+  merchant_id: string
+  business_description: string | null // max 300 chars
+  target_customers: string | null     // max 200 chars
+  business_goal: string | null        // max 200 chars
+  business_type: GiwiBusinessType | null
+  preferred_language: GiwiLanguage
+  onboarding_completed: boolean
+  conversation_memory: GiwiMemoryEntry[]
+  last_brief_shown_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+// -----------------------------------------------------------------------------
+// PlanBadgeState — AI-computed plan health badge
+// Stored in merchant_ai_context.badge_data as a map of plan_id -> PlanBadge
+// -----------------------------------------------------------------------------
+export type PlanBadgeState = 'growing' | 'stable' | 'high_churn' | 'needs_attention' | 'new'
+
+export interface PlanBadge {
+  state: PlanBadgeState
+  tooltip: string
+}
+
+// -----------------------------------------------------------------------------
+// MetricInsight — AI-generated explanation and chips for a dashboard metric card
+// -----------------------------------------------------------------------------
+export interface MetricInsight {
+  explanation: string
+  chips: [string, string, string] // always exactly 3: chip[0] is always "What is [metric]?"
+}
+
+// -----------------------------------------------------------------------------
+// GiwiInsights — full dashboard insights payload stored in merchant_ai_context
+// -----------------------------------------------------------------------------
+export interface GiwiInsights {
+  mrr: MetricInsight
+  active_subscribers: MetricInsight
+  churn_rate: MetricInsight
+  arpu: MetricInsight
+  insight_card: {
+    points: [string, string, string, string] // exactly 4 bullet points
+  }
+  computed_at: string
+}
+
+// -----------------------------------------------------------------------------
+// MerchantContextDocument — pre-computed business signals. Zero PII.
+// Written by service role only. Read by authenticated merchant (SELECT only).
+// -----------------------------------------------------------------------------
+export interface MerchantContextDocument {
+  computed_at: string
+  business_summary: {
+    total_active_subscribers: number
+    total_plans: number
+    active_plans: number
+  }
+  revenue: {
+    mrr: number           // INR rupees
+    arr: number           // INR rupees
+    mrr_last_month: number
+    mrr_growth_percent: number
+    arpu: number          // INR rupees
+  }
+  subscribers: {
+    active: number
+    new_this_month: number
+    cancelled_this_month: number
+    net_change_this_month: number
+    churn_rate_percent: number
+    upcoming_renewals_7d: number
+    avg_tenure_days: number
+  }
+  payments: {
+    failed_this_month: number
+    total_this_month: number
+    failed_payment_rate_percent: number
+  }
+  plans: Array<{
+    plan_id: string
+    plan_name: string
+    price: number         // INR rupees
+    billing_cycle: string
+    active_subscribers: number
+    new_this_month: number
+    cancelled_this_month: number
+    revenue_contribution_percent: number
+    trial_period_days: number
+  }>
+  risk_signals: {
+    high_concentration_risk: boolean
+    top_3_revenue_percent: number
+    early_churn_dominant: boolean
+  }
+}
+
+export interface MerchantAiContext {
+  id: string
+  merchant_id: string
+  context_document: MerchantContextDocument
+  badge_data: Record<string, PlanBadge>  // plan_id -> PlanBadge
+  dashboard_insights: GiwiInsights | Record<string, never>
+  dashboard_insights_computed_at: string | null
+  last_computed_at: string
+  is_computing: boolean
+  computing_started_at: string | null
+  created_at: string
+}
+
+// -----------------------------------------------------------------------------
+// GiwiMessage — a single message in the GIWI chat panel
+// -----------------------------------------------------------------------------
+export interface GiwiMessage {
+  id: string
+  role: 'giwi' | 'user'
+  content: string                      // display version (placeholders already replaced)
+  rawContent?: string                  // pre-replacement version used for summarisation
+  chips?: [string, string, string]     // shown below GIWI messages only
+  timestamp: string
+}
+
+// -----------------------------------------------------------------------------
+// PlanSuggestion — returned by /api/ai/suggest-plans
+// -----------------------------------------------------------------------------
+export interface PlanSuggestion {
+  name: string
+  description: string
+  price: number                        // INR rupees, integer
+  billing_cycle: 'monthly' | 'yearly' | 'quarterly'
+  trial_period_days: number
+  features: string[]                   // max 5 items
+  positioning: string                  // who this plan is for
+}

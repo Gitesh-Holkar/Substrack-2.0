@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import type { JSX } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -32,7 +33,7 @@ interface MerchantPaymentConfig {
 
 export default function Settings() {
   const { user, merchant, refreshMerchant } = useAuth()
-  const [activeTab, setActiveTab] = useState<'business' | 'stripe' | 'integrations'>('business')
+  const [activeTab, setActiveTab] = useState<'business' | 'stripe' | 'integrations' | 'ai'>('business')
   const [showSecretKey, setShowSecretKey] = useState(false)
   const [showPublishableKey, setShowPublishableKey] = useState(false)
   const [showWebhookSecret, setShowWebhookSecret] = useState(false)
@@ -376,6 +377,16 @@ export default function Settings() {
                 }`}
               >
                 Integrations
+              </button>
+              <button
+                onClick={() => setActiveTab('ai')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
+                  activeTab === 'ai'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                AI Assistant
               </button>
             </nav>
           </div>
@@ -936,8 +947,219 @@ export default function Settings() {
 
             {/* INTEGRATIONS TAB */}
             {activeTab === 'integrations' && <IntegrationsTab />}
+
+            {activeTab === 'ai' && (
+              <AiAssistantTab />
+            )}
           </div>
         </div>
       </div>
+  )
+}
+
+function AiAssistantTab(): JSX.Element {
+  const { user } = useAuth()
+  const [loading, setLoading] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
+  const [businessDescription, setBusinessDescription] = useState('')
+  const [targetCustomers, setTargetCustomers] = useState('')
+  const [businessGoal, setBusinessGoal] = useState('')
+  const [businessType, setBusinessType] = useState<string>('')
+  const [preferredLanguage, setPreferredLanguage] = useState<'english' | 'hinglish'>('english')
+
+  useEffect(() => {
+    if (!user) return
+    const load = async (): Promise<void> => {
+      try {
+        const res = await fetch('/api/ai/profile')
+        if (res.ok) {
+          const data = await res.json() as {
+            data?: {
+              business_description?: string
+              target_customers?: string
+              business_goal?: string
+              business_type?: string
+              preferred_language?: string
+            } | null
+          }
+          if (data.data) {
+            setBusinessDescription(data.data.business_description ?? '')
+            setTargetCustomers(data.data.target_customers ?? '')
+            setBusinessGoal(data.data.business_goal ?? '')
+            setBusinessType(data.data.business_type ?? '')
+            setPreferredLanguage((data.data.preferred_language as 'english' | 'hinglish') ?? 'english')
+          }
+        }
+      } catch {
+        // Non-critical load failure
+      }
+    }
+    void load()
+  }, [user])
+
+  const handleSave = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault()
+    setLoading(true)
+    setSuccessMessage('')
+    try {
+      const res = await fetch('/api/ai/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_description: businessDescription || null,
+          target_customers: targetCustomers || null,
+          business_goal: businessGoal || null,
+          business_type: businessType || null,
+          preferred_language: preferredLanguage,
+          onboarding_completed: true,
+        }),
+      })
+      if (res.ok) {
+        setSuccessMessage('AI profile saved successfully!')
+        setTimeout(() => setSuccessMessage(''), 3000)
+      }
+    } catch {
+      // Handle silently
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className='space-y-6'>
+      <div>
+        <h3 className='text-lg font-semibold text-gray-800 mb-1'>GIWI AI Assistant</h3>
+        <p className='text-sm text-gray-500'>
+          Help GIWI understand your business so it can give you more relevant insights and advice.
+        </p>
+      </div>
+
+      {successMessage && (
+        <div className='bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-md flex items-center gap-2 text-sm'>
+          <Check className='w-4 h-4 flex-shrink-0' />
+          {successMessage}
+        </div>
+      )}
+
+      <div className='bg-blue-50 border border-blue-200 rounded-lg p-4'>
+        <div className='flex items-start gap-3'>
+          <div className='flex-shrink-0 w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center mt-0.5'>
+            <svg className='w-4 h-4 text-white' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M13 10V3L4 14h7v7l9-11h-7z' />
+            </svg>
+          </div>
+          <div>
+            <p className='text-sm font-semibold text-blue-900'>Business insights are powered by Google Gemini</p>
+            <p className='text-xs text-blue-700 mt-1'>
+              Your aggregated business metrics (subscriber counts, revenue, churn rate) are shared with Google to generate insights.
+              Individual subscriber names and emails are never sent to Google.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <form onSubmit={(event) => void handleSave(event)} className='space-y-5'>
+        <div>
+          <label className='block text-sm font-medium text-gray-700 mb-1'>
+            Business Description
+            <span className='ml-1 text-xs text-gray-400 font-normal'>({businessDescription.length}/300)</span>
+          </label>
+          <p className='text-xs text-gray-500 mb-2'>
+            What does your business do and who does it serve?
+          </p>
+          <textarea
+            value={businessDescription}
+            onChange={(event) => setBusinessDescription(event.target.value.slice(0, 300))}
+            rows={3}
+            className='w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none'
+            placeholder='e.g. We provide cloud-based accounting software for Indian CAs and small businesses.'
+          />
+        </div>
+
+        <div>
+          <label className='block text-sm font-medium text-gray-700 mb-1'>
+            Target Customers
+            <span className='ml-1 text-xs text-gray-400 font-normal'>({targetCustomers.length}/200)</span>
+          </label>
+          <input
+            type='text'
+            value={targetCustomers}
+            onChange={(event) => setTargetCustomers(event.target.value.slice(0, 200))}
+            className='w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+            placeholder='e.g. Small business owners and CAs across Tier 1 and Tier 2 Indian cities'
+          />
+        </div>
+
+        <div>
+          <label className='block text-sm font-medium text-gray-700 mb-1'>
+            Current Business Goal
+            <span className='ml-1 text-xs text-gray-400 font-normal'>({businessGoal.length}/200)</span>
+          </label>
+          <input
+            type='text'
+            value={businessGoal}
+            onChange={(event) => setBusinessGoal(event.target.value.slice(0, 200))}
+            className='w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+            placeholder='e.g. Reduce monthly cancellations and convert more trial users to paid'
+          />
+        </div>
+
+        <div>
+          <label className='block text-sm font-medium text-gray-700 mb-1'>Business Type</label>
+          <select
+            value={businessType}
+            onChange={(event) => setBusinessType(event.target.value)}
+            className='w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white'
+          >
+            <option value=''>Select business type</option>
+            <option value='saas'>SaaS / Software Product</option>
+            <option value='agency'>Agency (Marketing, Design, IT)</option>
+            <option value='consultancy'>Consultancy / Advisory</option>
+            <option value='professional_service'>Professional Services (CA, Legal, Compliance)</option>
+            <option value='other'>Other</option>
+          </select>
+        </div>
+
+        <div>
+          <label className='block text-sm font-medium text-gray-700 mb-2'>GIWI Response Language</label>
+          <div className='flex gap-3'>
+            <button
+              type='button'
+              onClick={() => setPreferredLanguage('english')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                preferredLanguage === 'english'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+              }`}
+            >
+              English
+            </button>
+            <button
+              type='button'
+              onClick={() => setPreferredLanguage('hinglish')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                preferredLanguage === 'hinglish'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+              }`}
+            >
+              Hinglish
+            </button>
+          </div>
+          <p className='text-xs text-gray-400 mt-1'>
+            Hinglish uses a natural mix of Hindi and English as used by Indian business professionals.
+          </p>
+        </div>
+
+        <button
+          type='submit'
+          disabled={loading}
+          className='flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 transition-colors'
+        >
+          {loading ? <RefreshCw className='w-4 h-4 animate-spin' /> : <Check className='w-4 h-4' />}
+          Save AI Profile
+        </button>
+      </form>
+    </div>
   )
 }

@@ -14,7 +14,8 @@ import {
   Wallet,
   CreditCard,
   UserCheck,
-  Activity,  
+  Activity,
+  Sparkles,
 } from 'lucide-react'
 import {
   AreaChart,
@@ -98,6 +99,8 @@ export default function DashboardPage() {
     monthlyRevenue: 0,
     monthlyRevenueGrowth: 0,
   })
+  const [aiInsightsLoading, setAiInsightsLoading] = useState(false)
+  const [aiInsights, setAiInsights] = useState<import('@/lib/types').GiwiInsights | null>(null)
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([])
   const [revenueChartData, setRevenueChartData] = useState<RevenueChartData[]>([])
   const [subscriberChartData, setSubscriberChartData] = useState<SubscriberChartData[]>([])
@@ -109,8 +112,38 @@ export default function DashboardPage() {
   useEffect(() => {
     if (user) {
       loadDashboardData()
+      loadAiInsights()
     }
-  }, [user, dateRange])
+  }, [user, dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadAiInsights = async (): Promise<void> => {
+    if (aiInsightsLoading) return
+    setAiInsightsLoading(true)
+    try {
+      await fetch('/api/ai/context', { method: 'POST' })
+      const res = await fetch('/api/ai/insights', { method: 'POST' })
+      if (res.ok) {
+        const data = await res.json() as { data?: import('@/lib/types').GiwiInsights }
+        if (data.data) setAiInsights(data.data)
+      }
+    } catch {
+      // AI insights are non-critical — do not surface errors to user
+    } finally {
+      setAiInsightsLoading(false)
+    }
+  }
+
+  const openGiwiForMetric = (
+    metric: string,
+    explanation: string,
+    chips: [string, string, string]
+  ): void => {
+    window.dispatchEvent(
+      new CustomEvent('giwi:open', {
+        detail: { metric, explanation, chips },
+      })
+    )
+  }
 
   const loadDashboardData = async () => {
     try {
@@ -715,8 +748,24 @@ export default function DashboardPage() {
 
   {/* Active Subscribers */}
   <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
-    <div>
-      <p className='text-sm font-medium text-gray-500'>Active Subscribers</p>
+    <div className='flex-1'>
+      <div className='flex items-center gap-2'>
+        <p className='text-sm font-medium text-gray-500'>Active Subscribers</p>
+        {aiInsights && (
+          <button
+            type="button"
+            onClick={() => openGiwiForMetric(
+              'subscriber growth rate',
+              aiInsights.active_subscribers.explanation,
+              aiInsights.active_subscribers.chips
+            )}
+            title="Ask GIWI about your subscribers"
+            className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+          >
+            <Sparkles className='w-3 h-3 text-blue-600' />
+          </button>
+        )}
+      </div>
       <p className='text-2xl font-bold text-gray-800'>
         {stats.activeSubscribers}
       </p>
@@ -735,8 +784,24 @@ export default function DashboardPage() {
 
   {/* Avg Revenue per User */}
   <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
-    <div>
-      <p className='text-sm font-medium text-gray-500'>Avg Revenue per User</p>
+    <div className='flex-1'>
+      <div className='flex items-center gap-2'>
+        <p className='text-sm font-medium text-gray-500'>Avg Revenue per User</p>
+        {aiInsights && (
+          <button
+            type="button"
+            onClick={() => openGiwiForMetric(
+              'ARPU',
+              aiInsights.arpu.explanation,
+              aiInsights.arpu.chips
+            )}
+            title="Ask GIWI about your ARPU"
+            className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+          >
+            <Sparkles className='w-3 h-3 text-blue-600' />
+          </button>
+        )}
+      </div>
       <p className='text-2xl font-bold text-gray-800'>
         ₹{stats.activeSubscribers > 0 ? (stats.monthlyRevenue / stats.activeSubscribers).toFixed(2) : '0.00'}
       </p>
@@ -752,8 +817,24 @@ export default function DashboardPage() {
 <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mt-6'>
   {/* MRR (Monthly Recurring Revenue) */}
   <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
-    <div>
-      <p className='text-sm font-medium text-gray-500'>MRR (Monthly Recurring)</p>
+    <div className='flex-1'>
+      <div className='flex items-center gap-2'>
+        <p className='text-sm font-medium text-gray-500'>MRR (Monthly Recurring)</p>
+        {aiInsights && (
+          <button
+            type="button"
+            onClick={() => openGiwiForMetric(
+              'MRR',
+              aiInsights.mrr.explanation,
+              aiInsights.mrr.chips
+            )}
+            title="Ask GIWI about your MRR"
+            className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+          >
+            <Sparkles className='w-3 h-3 text-blue-600' />
+          </button>
+        )}
+      </div>
       <p className='text-2xl font-bold text-gray-800'>
         ₹{stats.mrr.toFixed(2)}
       </p>
@@ -806,8 +887,24 @@ export default function DashboardPage() {
 
   {/* Churn Rate */}
   <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
-    <div>
-      <p className='text-sm font-medium text-gray-500'>Churn Rate</p>
+    <div className='flex-1'>
+      <div className='flex items-center gap-2'>
+        <p className='text-sm font-medium text-gray-500'>Churn Rate</p>
+        {aiInsights && (
+          <button
+            type="button"
+            onClick={() => openGiwiForMetric(
+              'churn rate',
+              aiInsights.churn_rate.explanation,
+              aiInsights.churn_rate.chips
+            )}
+            title="Ask GIWI about your churn rate"
+            className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+          >
+            <Sparkles className='w-3 h-3 text-blue-600' />
+          </button>
+        )}
+      </div>
       <p className='text-2xl font-bold text-gray-800'>
         {stats.churnRate.toFixed(1)}%
       </p>
@@ -820,6 +917,53 @@ export default function DashboardPage() {
     </div>
   </div>
 </div>
+
+  {/* AI Insight Card */}
+  {(aiInsights || aiInsightsLoading) && (
+    <div className='mt-6 bg-white rounded-xl shadow-sm border border-blue-100 overflow-hidden'>
+      <div className='flex items-center gap-2 px-6 py-4 border-b border-gray-100'>
+        <div className='flex items-center justify-center w-7 h-7 rounded-full bg-blue-600'>
+          <Sparkles className='w-4 h-4 text-white' />
+        </div>
+        <h3 className='font-semibold text-gray-800 text-sm'>GIWI Business Snapshot</h3>
+        <span className='ml-auto text-xs text-gray-400'>
+          {aiInsights?.computed_at
+            ? `Updated ${new Date(aiInsights.computed_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
+            : ''}
+        </span>
+      </div>
+      <div className='px-6 py-4'>
+        {aiInsightsLoading && !aiInsights ? (
+          <div className='space-y-3'>
+            {[1, 2, 3, 4].map((item) => (
+              <div key={item} className='h-4 bg-gray-100 rounded animate-pulse' style={{ width: `${70 + item * 5}%` }} />
+            ))}
+          </div>
+        ) : aiInsights?.insight_card ? (
+          <ul className='space-y-3'>
+            {aiInsights.insight_card.points.map((point, index) => (
+              <li key={index} className='flex items-start gap-3 text-sm text-gray-700'>
+                <span className='flex-shrink-0 w-5 h-5 rounded-full bg-blue-50 flex items-center justify-center mt-0.5'>
+                  <span className='w-1.5 h-1.5 rounded-full bg-blue-600'></span>
+                </span>
+                {point}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {aiInsights && (
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('giwi:open', { detail: {} }))}
+            className='mt-4 text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1'
+          >
+            <Sparkles className='w-3 h-3' />
+            Ask GIWI a follow-up question
+          </button>
+        )}
+      </div>
+    </div>
+  )}
 
  {/* Charts Row */}
 <div className='mt-6'></div>

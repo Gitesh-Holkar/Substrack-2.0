@@ -87,6 +87,8 @@ export async function PATCH(
     )
   }
 
+  const nextStatus = status as 'active' | 'cancelled'
+
   // Verify the subscriber belongs to this merchant before mutating.
   // The merchant_id check prevents one merchant updating another's subscriber.
   const { data: existing, error: fetchError } = await serviceSupabase
@@ -98,9 +100,21 @@ export async function PATCH(
 
   if (fetchError || !existing) return err('Subscriber not found', 404)
 
+  const cancelledAt = nextStatus === 'cancelled' && existing.status !== 'cancelled'
+    ? new Date().toISOString()
+    : undefined
+
+  const updatePayload: Record<string, string | undefined> = {
+    status: nextStatus,
+    updated_at: new Date().toISOString(),
+  }
+  if (cancelledAt !== undefined) {
+    updatePayload.cancelled_at = cancelledAt
+  }
+
   const { data: updated, error: updateError } = await serviceSupabase
     .from('subscribers')
-    .update({ status, updated_at: new Date().toISOString() })
+    .update(updatePayload)
     .eq('id', id)
     .select(`
       id,
@@ -118,11 +132,11 @@ export async function PATCH(
 
   // Keep subscriber_count in sync with the subscribers table.
   // These RPCs already exist in the codebase — do not recreate them.
-  if (status === 'cancelled' && existing.status === 'active') {
+  if (nextStatus === 'cancelled' && existing.status === 'active') {
     await serviceSupabase.rpc('decrement_subscriber_count', {
       p_plan_id: existing.plan_id,
     })
-  } else if (status === 'active' && existing.status !== 'active') {
+  } else if (nextStatus === 'active' && existing.status !== 'active') {
     await serviceSupabase.rpc('increment_subscriber_count', {
       p_plan_id: existing.plan_id,
     })

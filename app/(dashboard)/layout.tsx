@@ -1,5 +1,6 @@
 import { Sidebar } from '@/components/dashboard/Sidebar'
 import { Header } from '@/components/dashboard/Header'
+import { GiwiPanel } from '@/components/dashboard/GiwiPanel'
 
 export default function DashboardLayout({
   children,
@@ -16,6 +17,8 @@ export default function DashboardLayout({
           {children}
         </main>
       </div>
+      {/* GIWI AI Assistant — renders via React Portal to document.body */}
+      <GiwiPanel />
     </div>
   )
 }

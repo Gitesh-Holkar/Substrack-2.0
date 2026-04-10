@@ -385,7 +385,10 @@ async function onSubscriptionCancelled(
 
   await supabase
     .from('subscribers')
-    .update({ status: 'cancelled' })
+    .update({
+      status: 'cancelled',
+      cancelled_at: new Date().toISOString(),
+    })
     .eq('id', subscriber.id)
 
   await supabase.rpc('decrement_subscriber_count', { p_plan_id: subscriber.plan_id })

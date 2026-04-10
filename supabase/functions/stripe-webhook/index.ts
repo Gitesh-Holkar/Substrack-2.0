@@ -132,6 +132,20 @@ serve(async (req) => {
     const normalizedEvent = await provider.parseWebhookEvent(parsedBody)
     console.log('Normalized event:', normalizedEvent.type)
     await handleNormalizedEvent(normalizedEvent, merchant as Merchant, supabase)
+
+    // Legacy Stripe safety: customer.subscription.deleted historically cancelled
+    // rows directly in this function. The shared normalized handler now owns that
+    // logic, but we still sync cancelled_at on the legacy Stripe column so older
+    // rows remain consistent when Stripe sends a deletion event.
+    if (parsedBody.type === 'customer.subscription.deleted' && typeof obj?.id === 'string') {
+      await supabase
+        .from('subscribers')
+        .update({
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString(),
+        })
+        .eq('stripe_subscription_id', obj.id)
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('Error handling Stripe event:', message)
