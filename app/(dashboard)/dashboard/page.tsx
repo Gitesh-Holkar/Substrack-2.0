@@ -112,9 +112,14 @@ export default function DashboardPage() {
   useEffect(() => {
     if (user) {
       loadDashboardData()
-      loadAiInsights()
     }
   }, [user, dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (user) {
+      loadAiInsights()
+    }
+  }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadAiInsights = async (): Promise<void> => {
     if (aiInsightsLoading) return
