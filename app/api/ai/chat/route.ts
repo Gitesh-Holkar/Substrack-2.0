@@ -12,7 +12,7 @@ import { serviceSupabase } from '@/lib/supabase/service'
 import { GIWI_KNOWLEDGE_BASE } from '@/lib/giwi/knowledgeBase'
 import type { MerchantContextDocument, MerchantAiProfile, GiwiMemoryEntry } from '@/lib/types'
 
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash'}:generateContent`
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL}:generateContent`
 
 const FUNCTION_DECLARATIONS = [
   {
@@ -21,7 +21,7 @@ const FUNCTION_DECLARATIONS = [
     parameters: {
       type: 'OBJECT',
       properties: {
-        days: { type: 'INTEGER', description: 'Number of days to look back (7, 14, or 30)', enum: [7, 14, 30] },
+        days: { type: 'STRING', description: 'Number of days to look back (7, 14, or 30)', enum: ['7', '14', '30'] },
       },
       required: ['days'],
     },
@@ -32,7 +32,7 @@ const FUNCTION_DECLARATIONS = [
     parameters: {
       type: 'OBJECT',
       properties: {
-        days: { type: 'INTEGER', description: 'Days ahead to look (7 or 14)', enum: [7, 14] },
+        days: { type: 'STRING', description: 'Days ahead to look (7 or 14)', enum: ['7', '14'] },
       },
       required: ['days'],
     },
@@ -54,7 +54,7 @@ const FUNCTION_DECLARATIONS = [
     parameters: {
       type: 'OBJECT',
       properties: {
-        days: { type: 'INTEGER', description: 'Number of days to look back (max 30)', enum: [7, 14, 30] },
+        days: { type: 'STRING', description: 'Number of days to look back (max 30)', enum: ['7', '14', '30'] },
       },
       required: ['days'],
     },
@@ -134,8 +134,10 @@ interface FunctionCallPart {
   functionCall?: {
     name: string
     args: Record<string, unknown>
+    id?: string
   }
   text?: string
+  thoughtSignature?: string
 }
 
 interface GeminiCandidateResponse {
@@ -148,8 +150,8 @@ interface GeminiCandidateResponse {
 
 type GeminiContentPart =
   | { text: string }
-  | { functionCall: { name: string; args: Record<string, unknown> } }
-  | { functionResponse: { name: string; response: { result: string } } }
+  | { functionCall: { name: string; args: Record<string, unknown>; id?: string }; thoughtSignature?: string }
+  | { functionResponse: { name: string; response: { result: string }; id?: string } }
 
 interface GeminiContent {
   role: string
@@ -163,10 +165,12 @@ function getSingleRelation<T>(value: T | T[] | null): T | null {
 
 async function executeGetRecentCancellations(
   merchantId: string,
-  days: number
+  days: number | string
 ): Promise<{ result: string; placeholderMap: PlaceholderMap }> {
+  const parsedDays = typeof days === 'string' ? parseInt(days, 10) : days
+  const daysNum = Number.isFinite(parsedDays) ? parsedDays : 30
   const since = new Date()
-  since.setDate(since.getDate() - days)
+  since.setDate(since.getDate() - daysNum)
 
   const { data } = await serviceSupabase
     .from('subscribers')
@@ -194,17 +198,19 @@ async function executeGetRecentCancellations(
   })
 
   return {
-    result: `${rows.length} cancellations in the last ${days} days:\n${resultRows.join('\n')}`,
+    result: `${rows.length} cancellations in the last ${daysNum} days:\n${resultRows.join('\n')}`,
     placeholderMap,
   }
 }
 
 async function executeGetUpcomingRenewals(
   merchantId: string,
-  days: number
+  days: number | string
 ): Promise<{ result: string; placeholderMap: PlaceholderMap }> {
+  const parsedDays = typeof days === 'string' ? parseInt(days, 10) : days
+  const daysNum = Number.isFinite(parsedDays) ? parsedDays : 7
   const future = new Date()
-  future.setDate(future.getDate() + days)
+  future.setDate(future.getDate() + daysNum)
 
   const { data } = await serviceSupabase
     .from('subscribers')
@@ -219,7 +225,7 @@ async function executeGetUpcomingRenewals(
   const rows = (data ?? []) as UpcomingRenewalDbRow[]
   const placeholderMap: PlaceholderMap = {}
   if (rows.length === 0) {
-    return { result: `No renewals due in the next ${days} days.`, placeholderMap }
+    return { result: `No renewals due in the next ${daysNum} days.`, placeholderMap }
   }
 
   const resultRows = rows.map((sub, index) => {
@@ -238,7 +244,7 @@ async function executeGetUpcomingRenewals(
   }, 0)
 
   return {
-    result: `${rows.length} renewals in the next ${days} days (total value ₹${totalValue.toFixed(2)}):\n${resultRows.join('\n')}`,
+    result: `${rows.length} renewals in the next ${daysNum} days (total value ₹${totalValue.toFixed(2)}):\n${resultRows.join('\n')}`,
     placeholderMap,
   }
 }
@@ -292,10 +298,12 @@ async function executeGetPlanPerformance(
 
 async function executeGetFailedPayments(
   merchantId: string,
-  days: number
+  days: number | string
 ): Promise<{ result: string; placeholderMap: PlaceholderMap }> {
+  const parsedDays = typeof days === 'string' ? parseInt(days, 10) : days
+  const daysNum = Number.isFinite(parsedDays) ? parsedDays : 30
   const since = new Date()
-  since.setDate(since.getDate() - days)
+  since.setDate(since.getDate() - daysNum)
 
   const { data } = await serviceSupabase
     .from('payment_transactions')
@@ -309,7 +317,7 @@ async function executeGetFailedPayments(
   const rows = (data ?? []) as FailedPaymentRow[]
   const placeholderMap: PlaceholderMap = {}
   if (rows.length === 0) {
-    return { result: `No failed payments in the last ${days} days.`, placeholderMap }
+    return { result: `No failed payments in the last ${daysNum} days.`, placeholderMap }
   }
 
   const resultRows = rows.map((tx, index) => {
@@ -322,7 +330,7 @@ async function executeGetFailedPayments(
 
   const totalLost = rows.reduce((sum, tx) => sum + tx.amount, 0)
   return {
-    result: `${rows.length} failed payments in the last ${days} days (₹${totalLost.toFixed(2)} at risk):\n${resultRows.join('\n')}`,
+    result: `${rows.length} failed payments in the last ${daysNum} days (₹${totalLost.toFixed(2)} at risk):\n${resultRows.join('\n')}`,
     placeholderMap,
   }
 }
@@ -477,17 +485,19 @@ BEHAVIOUR RULES:
 
     if (firstPart?.functionCall) {
       const { name, args } = firstPart.functionCall
+      const callId = (firstPart.functionCall as any).id as string | undefined
+      const thought = (firstPart as any).thoughtSignature as string | undefined
       let functionResult: { result: string; placeholderMap: PlaceholderMap }
 
       try {
         if (name === 'get_recent_cancellations') {
-          functionResult = await executeGetRecentCancellations(merchantId, (args.days as number) ?? 30)
+          functionResult = await executeGetRecentCancellations(merchantId, (args.days as string | number) ?? 30)
         } else if (name === 'get_upcoming_renewals') {
-          functionResult = await executeGetUpcomingRenewals(merchantId, (args.days as number) ?? 7)
+          functionResult = await executeGetUpcomingRenewals(merchantId, (args.days as string | number) ?? 7)
         } else if (name === 'get_plan_performance') {
           functionResult = await executeGetPlanPerformance(merchantId, (args.plan_name as string) ?? '')
         } else if (name === 'get_failed_payments') {
-          functionResult = await executeGetFailedPayments(merchantId, (args.days as number) ?? 30)
+          functionResult = await executeGetFailedPayments(merchantId, (args.days as string | number) ?? 30)
         } else {
           functionResult = { result: 'Unknown function called.', placeholderMap: {} }
         }
@@ -501,11 +511,11 @@ BEHAVIOUR RULES:
         ...contents,
         {
           role: 'model',
-          parts: [{ functionCall: { name, args } }],
+          parts: [{ functionCall: { name, args, id: callId }, thoughtSignature: thought }],
         },
         {
           role: 'user',
-          parts: [{ functionResponse: { name, response: { result: functionResult.result } } }],
+          parts: [{ functionResponse: { name, response: { result: functionResult.result }, id: callId } }],
         },
       ]
 

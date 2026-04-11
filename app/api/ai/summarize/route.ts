@@ -11,7 +11,7 @@ import { requireAuth } from '@/lib/supabase/server-auth'
 import { serviceSupabase } from '@/lib/supabase/service'
 import type { GiwiMemoryEntry } from '@/lib/types'
 
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash'}:generateContent`
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL}:generateContent`
 
 interface SummaryConversationTurn {
   role: string

@@ -13,7 +13,7 @@ import { serviceSupabase } from '@/lib/supabase/service'
 import { GIWI_KNOWLEDGE_BASE } from '@/lib/giwi/knowledgeBase'
 import type { MerchantAiProfile, PlanSuggestion } from '@/lib/types'
 
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash'}:generateContent`
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL}:generateContent`
 
 export async function POST(): Promise<NextResponse> {
   return requireAuth(async ({ merchantId }) => {
