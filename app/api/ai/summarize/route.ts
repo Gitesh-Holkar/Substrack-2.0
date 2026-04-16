@@ -9,9 +9,8 @@ export const runtime = 'nodejs'
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/supabase/server-auth'
 import { serviceSupabase } from '@/lib/supabase/service'
+import { geminiPost } from '@/lib/giwi/geminiClient'
 import type { GiwiMemoryEntry } from '@/lib/types'
-
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL}:generateContent`
 
 interface SummaryConversationTurn {
   role: string
@@ -78,32 +77,28 @@ Rules:
 - If nothing worth remembering was discussed, return {"intentions": [], "facts": []}
 - Do not include anything from the knowledge base, only merchant-revealed information`
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 10000)
-
     let rawResponse: string
     try {
-      const res = await fetch(`${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
+      const res = await geminiPost(
+        {
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: {
             response_mime_type: 'application/json',
             temperature: 0.2,
             maxOutputTokens: 500,
           },
-        }),
-      })
+        },
+        'GIWI summarize',
+        10000
+      )
 
       if (!res.ok) throw new Error(`Gemini API error: ${res.status}`)
       const data = await res.json() as GeminiSummaryResponse
       rawResponse = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[GIWI summarize] Gemini call failed:', message)
       return NextResponse.json({ status: 'skipped', reason: 'AI unavailable' })
-    } finally {
-      clearTimeout(timeout)
     }
 
     let extracted: { intentions: string[]; facts: string[] }

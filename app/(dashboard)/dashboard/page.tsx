@@ -16,6 +16,7 @@ import {
   UserCheck,
   Activity,
   Sparkles,
+  BarChart2,
 } from 'lucide-react'
 import {
   AreaChart,
@@ -249,7 +250,7 @@ export default function DashboardPage() {
             : 0
 
         const cancelledThisMonth = cancelledSubscribers.filter(
-          (s) => s.updated_at && new Date(s.updated_at) >= new Date(currentMonthStart)
+          (s) => s.cancelled_at && new Date(s.cancelled_at) >= new Date(currentMonthStart)
         ).length
 
         const activeAtMonthStart = activeCount + cancelledThisMonth
@@ -297,8 +298,8 @@ export default function DashboardPage() {
             const isActiveLastMonth =
               s.status === 'active' ||
               (s.status === 'cancelled' &&
-                s.updated_at &&
-                new Date(s.updated_at) >= new Date(currentMonthStart))
+                s.cancelled_at &&
+                new Date(s.cancelled_at) >= new Date(currentMonthStart))
             return isStartedBeforeThisMonth && isActiveLastMonth
           }) || []
 
@@ -467,8 +468,8 @@ export default function DashboardPage() {
         monthlyData[startMonthKey].new += 1
       }
 
-      if (sub.status === 'cancelled' && sub.updated_at) {
-        const cancelDate = new Date(sub.updated_at)
+      if (sub.status === 'cancelled' && sub.cancelled_at) {
+        const cancelDate = new Date(sub.cancelled_at)
         const cancelMonthKey = cancelDate.toLocaleDateString('en-US', {
           month: 'short',
           year: 'numeric',
@@ -713,8 +714,22 @@ export default function DashboardPage() {
 <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6'>
   {/* Monthly Revenue */}
   <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
-    <div>
-      <p className='text-sm font-medium text-gray-500'>Monthly Revenue</p>
+    <div className='flex-1'>
+      <div className='flex items-center gap-2'>
+        <p className='text-sm font-medium text-gray-500'>Monthly Revenue</p>
+        <button
+          type="button"
+          onClick={() => openGiwiForMetric(
+            'monthly revenue',
+            `Your monthly revenue is ₹${stats.monthlyRevenue.toFixed(2)} this month, ${stats.monthlyRevenueGrowth > 0 ? 'up' : stats.monthlyRevenueGrowth < 0 ? 'down' : 'flat'} ${Math.abs(stats.monthlyRevenueGrowth).toFixed(1)}% from last month. This includes all successful payments collected in the current calendar month — it differs from MRR which is calculated from active plan prices.`,
+            ['How does this differ from MRR?', 'Why did my revenue change this month?', 'How can I grow my monthly revenue?']
+          )}
+          title="Ask GIWI about your monthly revenue"
+          className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+        >
+          <Sparkles className='w-3 h-3 text-blue-600' />
+        </button>
+      </div>
       <p className='text-2xl font-bold text-gray-800'>
         ₹{stats.monthlyRevenue.toFixed(2)}
       </p>
@@ -733,8 +748,22 @@ export default function DashboardPage() {
 
   {/* Total Revenue */}
   <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
-    <div>
-      <p className='text-sm font-medium text-gray-500'>Total Revenue</p>
+    <div className='flex-1'>
+      <div className='flex items-center gap-2'>
+        <p className='text-sm font-medium text-gray-500'>Total Revenue</p>
+        <button
+          type="button"
+          onClick={() => openGiwiForMetric(
+            'total revenue',
+            `Your total all-time revenue collected through Substrack is ₹${stats.totalRevenue.toFixed(2)}. This is the cumulative sum of every successful payment — useful for understanding the overall scale of your subscription business since you started.`,
+            ['How is total revenue different from MRR?', 'What does total revenue tell me?', 'How can I track revenue growth over time?']
+          )}
+          title="Ask GIWI about your total revenue"
+          className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+        >
+          <Sparkles className='w-3 h-3 text-blue-600' />
+        </button>
+      </div>
       <p className='text-2xl font-bold text-gray-800'>
         ₹{stats.totalRevenue.toFixed(2)}
       </p>
@@ -821,7 +850,7 @@ export default function DashboardPage() {
 {/* Row 2: MRR | ARR | Upcoming Renewals | Churn Rate */}
 <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mt-6'>
   {/* MRR (Monthly Recurring Revenue) */}
-  <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
+  <div className='bg-white p-5 rounded-xl shadow-sm flex items-center justify-between'>
     <div className='flex-1'>
       <div className='flex items-center gap-2'>
         <p className='text-sm font-medium text-gray-500'>MRR (Monthly Recurring)</p>
@@ -858,8 +887,22 @@ export default function DashboardPage() {
 
   {/* ARR (Annual Recurring Revenue) */}
   <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
-    <div>
-      <p className='text-sm font-medium text-gray-500'>ARR (Annual Recurring)</p>
+    <div className='flex-1'>
+      <div className='flex items-center gap-2'>
+        <p className='text-sm font-medium text-gray-500'>ARR (Annual Recurring)</p>
+        <button
+          type="button"
+          onClick={() => openGiwiForMetric(
+            'ARR',
+            `Your ARR is ₹${stats.arr.toFixed(2)} — this is your current MRR annualised (MRR × 12). It gives you a scale view of your subscription business for planning and benchmarking, but it assumes your subscriber base stays constant for 12 months.`,
+            ['What is ARR and how is it calculated?', 'How does my ARR compare to Indian SaaS benchmarks?', 'What should I focus on to grow my ARR?']
+          )}
+          title="Ask GIWI about your ARR"
+          className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+        >
+          <Sparkles className='w-3 h-3 text-blue-600' />
+        </button>
+      </div>
       <p className='text-2xl font-bold text-gray-800'>
         ₹{stats.arr.toFixed(2)}
       </p>
@@ -872,14 +915,28 @@ export default function DashboardPage() {
       </div>
     </div>
     <div className='bg-pink-100 text-pink-500 rounded-full p-3'>
-      <TrendingUp className='w-6 h-6' />
+      <BarChart2 className='w-6 h-6' />
     </div>
   </div>
 
   {/* Upcoming Renewals */}
   <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
-    <div>
-      <p className='text-sm font-medium text-gray-500'>Upcoming Renewals</p>
+    <div className='flex-1'>
+      <div className='flex items-center gap-2'>
+        <p className='text-sm font-medium text-gray-500'>Upcoming Renewals</p>
+        <button
+          type="button"
+          onClick={() => openGiwiForMetric(
+            'upcoming renewals',
+            `You have ${stats.upcomingRenewals} subscription${stats.upcomingRenewals !== 1 ? 's' : ''} renewing in the next 7 days. Each renewal is a revenue retention moment — a successful renewal keeps your MRR stable, while a failed renewal creates involuntary churn risk.`,
+            ['Which subscribers are renewing soon?', 'What happens if a renewal payment fails?', 'How do I reduce renewal payment failures?']
+          )}
+          title="Ask GIWI about upcoming renewals"
+          className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+        >
+          <Sparkles className='w-3 h-3 text-blue-600' />
+        </button>
+      </div>
       <p className='text-2xl font-bold text-gray-800'>
         {stats.upcomingRenewals}
       </p>

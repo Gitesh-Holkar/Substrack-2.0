@@ -10,9 +10,8 @@ import { NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/supabase/server-auth'
 import { serviceSupabase } from '@/lib/supabase/service'
 import { GIWI_KNOWLEDGE_BASE } from '@/lib/giwi/knowledgeBase'
+import { geminiPost } from '@/lib/giwi/geminiClient'
 import type { GiwiInsights, MerchantContextDocument, MerchantAiProfile } from '@/lib/types'
-
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL}:generateContent`
 
 interface GeminiTextResponse {
   candidates?: Array<{
@@ -38,33 +37,24 @@ interface MerchantProfileInsightRow {
 }
 
 async function callGemini(prompt: string): Promise<string> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 15000)
+  const response = await geminiPost(
+    {
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        response_mime_type: 'application/json',
+        temperature: 0.4,
+        maxOutputTokens: 2000,
+      },
+    },
+    'GIWI insights'
+  )
 
-  try {
-    const response = await fetch(`${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          response_mime_type: 'application/json',
-          temperature: 0.4,
-          maxOutputTokens: 2000,
-        },
-      }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.status}`)
-    }
-
-    const data = await response.json() as GeminiTextResponse
-    return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-  } finally {
-    clearTimeout(timeout)
+  if (!response.ok) {
+    throw new Error(`Gemini API error: ${response.status}`)
   }
+
+  const data = await response.json() as GeminiTextResponse
+  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
 }
 
 export async function POST(): Promise<NextResponse> {
@@ -145,10 +135,10 @@ Generate insights for the dashboard. Return ONLY valid JSON in exactly this stru
   },
   "insight_card": {
     "points": [
-      "One specific revenue observation about this merchant's actual numbers",
-      "One subscriber health observation with specific counts",
-      "One risk or attention signal (or positive signal if no risks)",
-      "One specific recommended action they can take right now"
+      "Recent events: what changed this month — new subscribers joined, cancellations, or upcoming renewals this week, using actual counts",
+      "One specific revenue observation about this merchant's MRR, growth percentage, or ARPU with actual rupee amounts",
+      "One subscriber health observation with specific counts and context against healthy churn benchmarks",
+      "One risk signal or the single most impactful action they can take right now inside Substrack"
     ]
   },
   "computed_at": "${new Date().toISOString()}"
@@ -158,14 +148,21 @@ Rules:
 - chip[0] for each metric MUST be exactly the definition question shown (What is MRR?, What is churn rate?, etc.)
 - chip[1] and chip[2] must be specific to this merchant's data, not generic questions
 - insight_card.points must reference this merchant's actual numbers (rupee amounts, counts)
-- Keep all text concise — chips max 8 words, insight points max 20 words each
+- insight_card.points[0] MUST use new_this_month, cancelled_this_month, and upcoming_renewals_7d from the data. If all three are zero, state the next most time-sensitive signal (e.g. upcoming renewals or avg tenure)
+- Keep all text concise — chips max 8 words, insight points max 25 words each
 `
 
     let rawResponse: string
     try {
       rawResponse = await callGemini(prompt)
-    } catch {
-      return NextResponse.json({ error: 'AI service temporarily unavailable' }, { status: 503 })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[GIWI insights] Gemini call failed:', message)
+      const code = message.includes('429') ? 'QUOTA_EXCEEDED'
+        : message.includes('400') ? 'BAD_REQUEST'
+        : message.includes('abort') ? 'TIMEOUT'
+        : 'UNKNOWN'
+      return NextResponse.json({ error: 'AI service temporarily unavailable', code }, { status: 503 })
     }
 
     let insights: GiwiInsights

@@ -10,9 +10,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/supabase/server-auth'
 import { serviceSupabase } from '@/lib/supabase/service'
 import { GIWI_KNOWLEDGE_BASE } from '@/lib/giwi/knowledgeBase'
+import { geminiPost } from '@/lib/giwi/geminiClient'
 import type { MerchantContextDocument, MerchantAiProfile, GiwiMemoryEntry } from '@/lib/types'
-
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL}:generateContent`
 
 const FUNCTION_DECLARATIONS = [
   {
@@ -452,17 +451,12 @@ BEHAVIOUR RULES:
     })
 
     const allPlaceholderMaps: PlaceholderMap = {}
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15000)
 
     let geminiResponse: GeminiCandidateResponse
 
     try {
-      const res = await fetch(`${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
+      const res = await geminiPost(
+        {
           system_instruction: { parts: [{ text: systemInstruction }] },
           contents,
           tools: [{ function_declarations: FUNCTION_DECLARATIONS }],
@@ -470,15 +464,20 @@ BEHAVIOUR RULES:
             temperature: 0.7,
             maxOutputTokens: 1000,
           },
-        }),
-      })
+        },
+        'GIWI chat'
+      )
 
       if (!res.ok) throw new Error(`Gemini API error: ${res.status}`)
       geminiResponse = await res.json() as GeminiCandidateResponse
-    } catch {
-      return NextResponse.json({ error: 'AI service temporarily unavailable. Please try again in a moment.' }, { status: 503 })
-    } finally {
-      clearTimeout(timeout)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[GIWI chat] First Gemini call failed:', message)
+      const code = message.includes('429') ? 'QUOTA_EXCEEDED'
+        : message.includes('400') ? 'BAD_REQUEST'
+        : message.includes('abort') ? 'TIMEOUT'
+        : 'UNKNOWN'
+      return NextResponse.json({ error: 'AI service temporarily unavailable. Please try again in a moment.', code }, { status: 503 })
     }
 
     const firstPart = geminiResponse.candidates?.[0]?.content?.parts?.[0]
@@ -519,30 +518,29 @@ BEHAVIOUR RULES:
         },
       ]
 
-      const controller2 = new AbortController()
-      const timeout2 = setTimeout(() => controller2.abort(), 15000)
-
       let finalResponse: GeminiCandidateResponse
       try {
-        const res2 = await fetch(`${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller2.signal,
-          body: JSON.stringify({
+        const res2 = await geminiPost(
+          {
             system_instruction: { parts: [{ text: systemInstruction }] },
             contents: contentsWithFunction,
             generationConfig: {
               temperature: 0.7,
               maxOutputTokens: 1000,
             },
-          }),
-        })
+          },
+          'GIWI chat (function result)'
+        )
         if (!res2.ok) throw new Error(`Gemini API error: ${res2.status}`)
         finalResponse = await res2.json() as GeminiCandidateResponse
-      } catch {
-        return NextResponse.json({ error: 'AI service temporarily unavailable.' }, { status: 503 })
-      } finally {
-        clearTimeout(timeout2)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error('[GIWI chat] Second Gemini call failed (function calling):', message)
+        const code = message.includes('429') ? 'QUOTA_EXCEEDED'
+          : message.includes('400') ? 'BAD_REQUEST'
+          : message.includes('abort') ? 'TIMEOUT'
+          : 'UNKNOWN'
+        return NextResponse.json({ error: 'AI service temporarily unavailable.', code }, { status: 503 })
       }
 
       let responseText = finalResponse.candidates?.[0]?.content?.parts?.[0]?.text ?? 'I was unable to generate a response. Please try again.'

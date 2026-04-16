@@ -11,9 +11,8 @@ import { NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/supabase/server-auth'
 import { serviceSupabase } from '@/lib/supabase/service'
 import { GIWI_KNOWLEDGE_BASE } from '@/lib/giwi/knowledgeBase'
+import { geminiPost } from '@/lib/giwi/geminiClient'
 import type { MerchantAiProfile, PlanSuggestion } from '@/lib/types'
-
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL}:generateContent`
 
 export async function POST(): Promise<NextResponse> {
   return requireAuth(async ({ merchantId }) => {
@@ -116,37 +115,37 @@ Rules:
 - All 3 suggestions must be meaningfully different in price, features, and target audience
 `
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 20000)
-
     let rawResponse: string
     try {
-      const res = await fetch(`${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
+      const res = await geminiPost(
+        {
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: {
             response_mime_type: 'application/json',
             temperature: 0.6,
             maxOutputTokens: 1500,
           },
-        }),
-      })
+        },
+        'GIWI suggest-plans',
+        20000
+      )
 
       if (!res.ok) throw new Error(`Gemini API error: ${res.status}`)
       const data = await res.json() as {
         candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
       }
       rawResponse = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[GIWI suggest-plans] Gemini call failed:', message)
+      const code = message.includes('429') ? 'QUOTA_EXCEEDED'
+        : message.includes('400') ? 'BAD_REQUEST'
+        : message.includes('abort') ? 'TIMEOUT'
+        : 'UNKNOWN'
       return NextResponse.json(
-        { error: 'AI service temporarily unavailable. Please try again.' },
+        { error: 'AI service temporarily unavailable. Please try again.', code },
         { status: 503 }
       )
-    } finally {
-      clearTimeout(timeout)
     }
 
     let parsed: { suggestions: PlanSuggestion[] }

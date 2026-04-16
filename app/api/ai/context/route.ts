@@ -76,7 +76,9 @@ export async function POST(): Promise<NextResponse> {
         )
 
       return NextResponse.json({ status: 'computed', computed_at: now.toISOString() })
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[GIWI context] Context computation failed:', message)
       await serviceSupabase
         .from('merchant_ai_context')
         .upsert(
@@ -87,7 +89,7 @@ export async function POST(): Promise<NextResponse> {
           },
           { onConflict: 'merchant_id' }
         )
-      return NextResponse.json({ error: 'Context computation failed' }, { status: 500 })
+      return NextResponse.json({ error: 'Context computation failed', code: 'COMPUTATION_ERROR' }, { status: 500 })
     }
   })
 }
