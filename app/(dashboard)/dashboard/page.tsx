@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Wallet,
   CreditCard,
+  BarChart2,
   UserCheck,
   Activity,
   Sparkles,
@@ -904,10 +905,29 @@ export default function DashboardPage() {
       onClick={() => router.push('/subscribers?status=past_due')}
       className='bg-orange-50 p-6 rounded-xl shadow-sm flex items-center justify-between border border-orange-200 hover:bg-orange-100 transition-colors text-left w-full cursor-pointer'
     >
-      <div>
-        <p className='text-sm font-medium text-orange-700'>Revenue at Risk</p>
+      <div className='flex-1'>
+        <div className='flex items-center gap-2'>
+          <p className='text-sm font-medium text-orange-700'>Revenue at Risk</p>
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation()
+              openGiwiForMetric(
+                'Revenue at Risk',
+                `₹${stats.revenueAtRisk.toFixed(2)} is at risk across ${stats.pastDueCount} subscriber${stats.pastDueCount !== 1 ? 's' : ''} whose payments have failed. These are in active dunning recovery — Day 1, Day 3, and Day 7 reminder emails are being sent automatically. If payment is not collected by Day 7, the subscription is cancelled.`,
+                ['What is dunning and how does it work?', 'How do I recover failed payments faster?', 'What happens if dunning fails completely?']
+              )
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.click()}
+            title="Ask GIWI about Revenue at Risk"
+            className='flex items-center justify-center w-5 h-5 rounded-full bg-orange-100 hover:bg-orange-200 transition-colors cursor-pointer'
+          >
+            <Sparkles className='w-3 h-3 text-orange-600' />
+          </span>
+        </div>
         <p className='text-2xl font-bold text-orange-800'>
-          &#8377;{stats.revenueAtRisk.toFixed(2)}
+          ₹{stats.revenueAtRisk.toFixed(2)}
         </p>
         <p className='text-xs text-orange-600 mt-1'>
           {stats.pastDueCount} subscriber{stats.pastDueCount !== 1 ? 's' : ''} in recovery — click to view
@@ -919,10 +939,24 @@ export default function DashboardPage() {
     </button>
   ) : (
     <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
-      <div>
-        <p className='text-sm font-medium text-gray-500'>ARR (Annual Recurring)</p>
+      <div className='flex-1'>
+        <div className='flex items-center gap-2'>
+          <p className='text-sm font-medium text-gray-500'>ARR (Annual Recurring)</p>
+          <button
+            type="button"
+            onClick={() => openGiwiForMetric(
+              'ARR',
+              `Your ARR is ₹${stats.arr.toFixed(2)} — this is your current MRR annualised (MRR × 12). It gives you a scale view of your subscription business for planning and benchmarking, but it assumes your subscriber base stays constant for 12 months.`,
+              ['What is ARR and how is it calculated?', 'How does my ARR compare to Indian SaaS benchmarks?', 'What should I focus on to grow my ARR?']
+            )}
+            title="Ask GIWI about your ARR"
+            className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+          >
+            <Sparkles className='w-3 h-3 text-blue-600' />
+          </button>
+        </div>
         <p className='text-2xl font-bold text-gray-800'>
-          &#8377;{stats.arr.toFixed(2)}
+          ₹{stats.arr.toFixed(2)}
         </p>
         <div className={`text-xs flex items-center gap-1 mt-1 ${getGrowthColor(stats.arrGrowth)}`}>
           {getGrowthIcon(stats.arrGrowth)}
@@ -933,7 +967,7 @@ export default function DashboardPage() {
         </div>
       </div>
       <div className='bg-pink-100 text-pink-500 rounded-full p-3'>
-        <TrendingUp className='w-6 h-6' />
+        <BarChart2 className='w-6 h-6' />
       </div>
     </div>
   )}
