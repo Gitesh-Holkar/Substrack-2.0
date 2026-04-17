@@ -54,3 +54,9 @@ verify_jwt = false
 schedule = "30 0 * * *"
 import_map = "./functions/dunning-cron/deno.json"
 entrypoint = "./functions/dunning-cron/index.ts"
+
+[functions.notify-migration]
+enabled = true
+verify_jwt = true
+import_map = "./functions/notify-migration/deno.json"
+entrypoint = "./functions/notify-migration/index.ts"

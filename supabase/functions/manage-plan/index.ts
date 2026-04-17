@@ -146,7 +146,7 @@ serve(async (req) => {
 
         const { error: updateError } = await supabase
           .from('subscription_plans')
-          .update({ is_active: false })
+          .update({ is_active: false, archived_at: new Date().toISOString() })
           .eq('id', planId)
           .eq('merchant_id', user.id)
 

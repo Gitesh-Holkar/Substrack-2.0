@@ -79,7 +79,7 @@ export function NotificationBell() {
           status,
           created_at,
           updated_at,
-          subscription_plans (name)
+          subscription_plans!plan_id (name)
         `)
         .eq('merchant_id', user!.id)
         .gte('updated_at', sevenDaysAgo.toISOString())
@@ -96,7 +96,7 @@ export function NotificationBell() {
           payment_date,
           amount,
           subscribers (customer_name),
-          subscription_plans (name)
+          subscription_plans!plan_id (name)
         `)
         .eq('merchant_id', user!.id)
         .eq('status', 'failed')
@@ -116,7 +116,7 @@ export function NotificationBell() {
           id,
           customer_name,
           next_renewal_date,
-          subscription_plans (name)
+          subscription_plans!plan_id (name)
         `)
         .eq('merchant_id', user!.id)
         .eq('status', 'active')

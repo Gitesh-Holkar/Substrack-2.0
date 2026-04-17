@@ -123,6 +123,10 @@ export interface Subscriber {
   stripe_subscription_id: string | null
   stripe_customer_id: string | null
 
+  // Set when this subscriber re-subscribed after an archived plan cancellation.
+  // When populated, the old subscription cancellation does not count as churn.
+  migrated_from_plan_id: string | null
+
   created_at: string
   updated_at: string
 }

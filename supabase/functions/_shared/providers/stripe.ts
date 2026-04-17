@@ -116,6 +116,7 @@ export class StripeProvider implements IPaymentProvider {
           merchant_id: params.merchant.id,
           plan_id: params.plan.id,
           customer_name: params.customerName,
+          customer_email: params.customerEmail,
         },
       },
     })

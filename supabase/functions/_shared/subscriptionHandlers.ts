@@ -121,6 +121,24 @@ async function onSubscriptionActivated(
     return
   }
 
+  // Migration detection: check if this email cancelled a subscription on this
+  // merchant within the last 30 days. If yes, this is a plan transfer not churn.
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  const { data: recentlyCancelled } = await supabase
+    .from('subscribers')
+    .select('id, plan_id')
+    .eq('merchant_id', event.merchantId)
+    .eq('customer_email', event.customerEmail.toLowerCase().trim())
+    .eq('status', 'cancelled')
+    .gte('cancelled_at', thirtyDaysAgo)
+    .neq('plan_id', event.planId)
+    .is('migrated_from_plan_id', null)
+    .order('cancelled_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const migratedFromPlanId = recentlyCancelled?.plan_id ?? null
+
   // No existing row - insert new subscriber
   const subscriberRow: Record<string, unknown> = {
     merchant_id: event.merchantId,
@@ -135,6 +153,7 @@ async function onSubscriptionActivated(
     next_renewal_date: event.nextRenewalDate.toISOString(),
     last_payment_date: isCashfreeDeferred ? null : new Date().toISOString(),
     last_payment_amount: isCashfreeDeferred ? null : event.amount,
+    migrated_from_plan_id: migratedFromPlanId,
   }
 
   // Keep legacy Stripe columns populated for backwards compatibility
@@ -402,7 +421,7 @@ async function onSubscriptionCancelled(
 ): Promise<void> {
   const { data: subscriber } = await supabase
     .from('subscribers')
-    .select('id, merchant_id, plan_id, customer_name, customer_email')
+    .select('id, merchant_id, plan_id, customer_name, customer_email, migrated_from_plan_id')
     .eq('provider_subscription_id', event.providerSubscriptionId)
     .limit(1)
     .single()
@@ -449,6 +468,13 @@ async function onSubscriptionCancelled(
 
   const higherPlan = higherPlans?.[0] ?? null
   const businessName = merchantRow?.business_name ?? 'Your subscription provider'
+
+  // Migrated subscribers already have a new active plan.
+  // Do not send a cancellation email — the old subscription ending is expected.
+  if (subscriber.migrated_from_plan_id) {
+    console.log('Subscription cancelled for migrated subscriber — skipping cancellation email:', subscriber.id)
+    return
+  }
 
   if (cancelledPlan) {
     const resubscribeUrl = `https://substrack.work.gd/subscribe/${subscriber.plan_id}`

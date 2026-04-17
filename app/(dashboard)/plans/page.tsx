@@ -36,6 +36,11 @@ export default function PlansPage() {
   const [editingPlan, setEditingPlan] = useState<PlanWithActiveCount | null>(null)
   const [loading, setLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'paused' | 'archived'>('all')
+  const [archiveModal, setArchiveModal] = useState<{
+    open: boolean
+    plan: PlanWithActiveCount | null
+    loading: boolean
+  }>({ open: false, plan: null, loading: false })
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -342,27 +347,76 @@ export default function PlansPage() {
     }
   }
 
-  const archivePlan = async (plan: PlanWithActiveCount) => {
+  const archivePlan = (plan: PlanWithActiveCount): void => {
     const activeSubs = plan.active_subscriber_count ?? 0
-
-    const message = activeSubs > 0
-      ? `This plan has ${activeSubs} active subscriber(s). Archiving prevents new subscriptions but existing subscribers continue billing normally. Archive anyway?`
-      : 'Archive this plan? This cannot be undone. The plan record is kept permanently for payment history.'
-
-    if (!window.confirm(message)) return
-
-    const { error } = await supabase
-      .from('subscription_plans')
-      .update({
-        is_active: false,
-        archived_at: new Date().toISOString(),
-      })
-      .eq('id', plan.id)
-
-    if (error) {
-      alert('Failed to archive plan: ' + error.message)
+    if (activeSubs > 0) {
+      setArchiveModal({ open: true, plan, loading: false })
     } else {
+      if (!window.confirm('Archive this plan? This cannot be undone. The plan record is kept permanently for payment history.')) return
+      void executeArchive(plan, false)
+    }
+  }
+
+  const executeArchive = async (plan: PlanWithActiveCount, notifySubscribers: boolean): Promise<void> => {
+    setArchiveModal((prev) => ({ ...prev, loading: true }))
+
+    try {
+      // Step 1: Notify gateway to archive the plan.
+      // manage-plan also sets is_active + archived_at in the DB.
+      const hasGateway = merchant?.stripe_api_key || (merchant as any)?.cashfree_app_id
+      if (hasGateway) {
+        try {
+          const paymentService = new PaymentService()
+          await paymentService.archivePlan(plan.id)
+        } catch (gatewayErr) {
+          console.error('Gateway archive failed — continuing with local archive:', gatewayErr)
+        }
+      } else {
+        // No gateway — write directly to DB
+        const { error: dbError } = await supabase
+          .from('subscription_plans')
+          .update({ is_active: false, archived_at: new Date().toISOString() })
+          .eq('id', plan.id)
+
+        if (dbError) throw new Error('Failed to archive plan: ' + dbError.message)
+      }
+
+      // Step 2: Optionally send migration emails
+      if (notifySubscribers) {
+        const { data: { session } } = await supabase.auth.getSession()
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/notify-migration`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session?.access_token ?? ''}`,
+            },
+            body: JSON.stringify({ planId: plan.id }),
+          }
+        )
+
+        const result = await response.json() as { success: boolean; emailsSent?: number; error?: string }
+
+        if (!result.success) {
+          console.error('notify-migration failed:', result.error)
+          alert(`Plan archived. However, migration emails could not be sent: ${result.error ?? 'Unknown error'}`)
+          setArchiveModal({ open: false, plan: null, loading: false })
+          loadPlans()
+          return
+        }
+
+        alert(`✅ Plan archived. ${result.emailsSent ?? 0} subscriber${(result.emailsSent ?? 0) !== 1 ? 's' : ''} notified to migrate.`)
+      } else {
+        alert('✅ Plan archived. Existing subscribers will continue billing normally.')
+      }
+
+      setArchiveModal({ open: false, plan: null, loading: false })
       loadPlans()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      alert('Failed to archive plan: ' + msg)
+      setArchiveModal((prev) => ({ ...prev, loading: false }))
     }
   }
 
@@ -1129,6 +1183,77 @@ export default function PlansPage() {
                 </div>
               </form>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Archive Options Modal */}
+      {archiveModal.open && archiveModal.plan && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-start mb-5">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center mr-3">
+                <svg className="w-5 h-5 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8m-9 4v4m4-4v4" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Archive &quot;{archiveModal.plan.name}&quot;</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  This plan has{' '}
+                  <strong>{archiveModal.plan.active_subscriber_count ?? 0} active subscriber{(archiveModal.plan.active_subscriber_count ?? 0) !== 1 ? 's' : ''}</strong>.
+                  Choose what happens to them.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-5">
+              <button
+                type="button"
+                onClick={() => { if (!archiveModal.loading) void executeArchive(archiveModal.plan!, false) }}
+                disabled={archiveModal.loading}
+                className="w-full text-left border border-gray-200 rounded-lg p-4 hover:border-blue-400 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <p className="font-semibold text-gray-900 text-sm mb-1">Keep them active</p>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Existing subscribers stay on this plan and billing continues normally until
+                  they cancel themselves. No emails are sent.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => { if (!archiveModal.loading) void executeArchive(archiveModal.plan!, true) }}
+                disabled={archiveModal.loading}
+                className="w-full text-left border border-gray-200 rounded-lg p-4 hover:border-orange-400 hover:bg-orange-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <p className="font-semibold text-gray-900 text-sm mb-1">Notify subscribers to migrate</p>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Each subscriber receives an email telling them their plan ends at their next
+                  billing date, with links to your available plans. If they do not switch,
+                  their subscription ends then.
+                </p>
+              </button>
+            </div>
+
+            {archiveModal.loading && (
+              <div className="flex items-center justify-center mb-4 text-sm text-gray-500">
+                <svg className="animate-spin w-4 h-4 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                Processing...
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => { if (!archiveModal.loading) setArchiveModal({ open: false, plan: null, loading: false }) }}
+              disabled={archiveModal.loading}
+              className="w-full text-center text-sm text-gray-500 hover:text-gray-700 mt-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}

@@ -70,7 +70,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       last_payment_amount,
       created_at,
       updated_at,
-      subscription_plans (
+      subscription_plans!plan_id (
         id,
         name,
         price,

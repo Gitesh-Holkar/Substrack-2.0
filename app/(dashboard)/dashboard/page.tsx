@@ -255,7 +255,10 @@ export default function DashboardPage() {
             : 0
 
         const cancelledThisMonth = cancelledSubscribers.filter(
-          (s) => s.cancelled_at && new Date(s.cancelled_at) >= new Date(currentMonthStart)
+          (s) =>
+            s.cancelled_at &&
+            new Date(s.cancelled_at) >= new Date(currentMonthStart) &&
+            !s.migrated_from_plan_id
         ).length
 
         const activeAtMonthStart = activeCount + cancelledThisMonth

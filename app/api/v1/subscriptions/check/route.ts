@@ -57,7 +57,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       next_renewal_date,
       last_payment_date,
       last_payment_amount,
-      subscription_plans (
+      subscription_plans!plan_id (
         id,
         name,
         price,

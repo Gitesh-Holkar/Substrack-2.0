@@ -93,6 +93,7 @@ export async function computeMerchantContext(
     .eq('merchant_id', merchantId)
     .eq('status', 'cancelled')
     .gte('cancelled_at', currentMonthStart)
+    .is('migrated_from_plan_id', null)
 
   const { data: newThisMonth } = await serviceSupabase
     .from('subscribers')

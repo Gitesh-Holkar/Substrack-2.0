@@ -78,7 +78,7 @@ function SubscribersPageInner() {
           payment_provider,
           dunning_step,
           plan_id,
-          subscription_plans (
+          subscription_plans!plan_id (
             id,
             name,
             price,

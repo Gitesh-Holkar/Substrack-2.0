@@ -51,7 +51,7 @@ const { data: subscriber, error: subscriberError } = await supabase
     last_payment_date,
     last_payment_amount,
     start_date,
-    subscription_plans (
+    subscription_plans!plan_id (
       id,
       name,
       price,

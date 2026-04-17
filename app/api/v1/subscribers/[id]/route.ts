@@ -33,7 +33,7 @@ export async function GET(
       last_payment_amount,
       created_at,
       updated_at,
-      subscription_plans (
+      subscription_plans!plan_id (
         id,
         name,
         price,
@@ -124,7 +124,7 @@ export async function PATCH(
       start_date,
       next_renewal_date,
       updated_at,
-      subscription_plans ( id, name, price, currency, billing_cycle )
+      subscription_plans!plan_id ( id, name, price, currency, billing_cycle )
     `)
     .single()
 

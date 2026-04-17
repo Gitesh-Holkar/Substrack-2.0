@@ -99,6 +99,24 @@ serve(async (req) => {
     // For Cashfree: store a pending subscriber row immediately so that when the
     // webhook fires, we can resolve merchant_id and plan_id even if subscription_tags
     // are null (which Cashfree does not reliably echo back in webhook payloads).
+    // Migration detection for Cashfree: check if this email cancelled a subscription
+    // on this merchant within the last 30 days.
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    const { data: recentlyCancelled } = await supabase
+      .from('subscribers')
+      .select('id, plan_id')
+      .eq('merchant_id', merchantId)
+      .eq('customer_email', customerEmail.toLowerCase().trim())
+      .eq('status', 'cancelled')
+      .gte('cancelled_at', thirtyDaysAgo)
+      .neq('plan_id', planId)
+      .is('migrated_from_plan_id', null)
+      .order('cancelled_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    const migratedFromPlanId = recentlyCancelled?.plan_id ?? null
+
     if (merchant.payment_provider === 'cashfree' && result.providerSubscriptionId) {
       await supabase.from('subscribers').insert({
         merchant_id: merchantId,
@@ -109,8 +127,12 @@ serve(async (req) => {
         payment_provider: 'cashfree',
         provider_subscription_id: result.providerSubscriptionId,
         start_date: new Date().toISOString(),
+        migrated_from_plan_id: migratedFromPlanId,
       })
       console.log('Pending Cashfree subscriber stored:', result.providerSubscriptionId)
+      if (migratedFromPlanId) {
+        console.log('Migration detected from plan:', migratedFromPlanId)
+      }
     }
 
     return new Response(
