@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
+import { useRouter } from 'next/navigation'
 import {
   Users,
   Calendar,
@@ -16,7 +17,6 @@ import {
   UserCheck,
   Activity,
   Sparkles,
-  BarChart2,
 } from 'lucide-react'
 import {
   AreaChart,
@@ -39,14 +39,16 @@ interface DashboardStats {
   revenueGrowth: number
   activeSubscribers: number
   subscriberGrowth: number
-  upcomingRenewals: number  
-  churnRate: number          
-  mrr: number                
-  arr: number                
-  mrrGrowth: number          
-  arrGrowth: number          
+  upcomingRenewals: number
+  churnRate: number
+  mrr: number
+  arr: number
+  mrrGrowth: number
+  arrGrowth: number
   monthlyRevenue: number
   monthlyRevenueGrowth: number
+  revenueAtRisk: number
+  pastDueCount: number
 }
 interface RecentActivity {
   id: string
@@ -85,6 +87,7 @@ const COLORS = [
 
 export default function DashboardPage() {
   const { user } = useAuth()
+  const router = useRouter()
   const supabase = createClient()
   const [stats, setStats] = useState<DashboardStats>({
     totalRevenue: 0,
@@ -99,6 +102,8 @@ export default function DashboardPage() {
     arrGrowth: 0,
     monthlyRevenue: 0,
     monthlyRevenueGrowth: 0,
+    revenueAtRisk: 0,
+    pastDueCount: 0,
   })
   const [aiInsightsLoading, setAiInsightsLoading] = useState(false)
   const [aiInsights, setAiInsights] = useState<import('@/lib/types').GiwiInsights | null>(null)
@@ -339,6 +344,10 @@ export default function DashboardPage() {
           arrGrowth,
           monthlyRevenue: currentMonthRevenue,
           monthlyRevenueGrowth,
+          pastDueCount: allSubscribers.filter((s: { status: string }) => s.status === 'past_due').length,
+          revenueAtRisk: allSubscribers
+            .filter((s: { status: string }) => s.status === 'past_due')
+            .reduce((sum: number, s: { last_payment_amount?: number | null }) => sum + (s.last_payment_amount ?? 0), 0),
         })
 
         const subscribersByMonth = prepareSubscriberChartData(allSubscribers, dateRange)
@@ -885,39 +894,46 @@ export default function DashboardPage() {
     </div>
   </div>
 
-  {/* ARR (Annual Recurring Revenue) */}
-  <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
-    <div className='flex-1'>
-      <div className='flex items-center gap-2'>
+  {/* Contextual: Revenue at Risk when dunning active, ARR when healthy */}
+  {stats.pastDueCount > 0 ? (
+    <button
+      type="button"
+      onClick={() => router.push('/subscribers?status=past_due')}
+      className='bg-orange-50 p-6 rounded-xl shadow-sm flex items-center justify-between border border-orange-200 hover:bg-orange-100 transition-colors text-left w-full cursor-pointer'
+    >
+      <div>
+        <p className='text-sm font-medium text-orange-700'>Revenue at Risk</p>
+        <p className='text-2xl font-bold text-orange-800'>
+          &#8377;{stats.revenueAtRisk.toFixed(2)}
+        </p>
+        <p className='text-xs text-orange-600 mt-1'>
+          {stats.pastDueCount} subscriber{stats.pastDueCount !== 1 ? 's' : ''} in recovery — click to view
+        </p>
+      </div>
+      <div className='bg-orange-100 text-orange-600 rounded-full p-3'>
+        <TrendingDown className='w-6 h-6' />
+      </div>
+    </button>
+  ) : (
+    <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>
+      <div>
         <p className='text-sm font-medium text-gray-500'>ARR (Annual Recurring)</p>
-        <button
-          type="button"
-          onClick={() => openGiwiForMetric(
-            'ARR',
-            `Your ARR is ₹${stats.arr.toFixed(2)} — this is your current MRR annualised (MRR × 12). It gives you a scale view of your subscription business for planning and benchmarking, but it assumes your subscriber base stays constant for 12 months.`,
-            ['What is ARR and how is it calculated?', 'How does my ARR compare to Indian SaaS benchmarks?', 'What should I focus on to grow my ARR?']
-          )}
-          title="Ask GIWI about your ARR"
-          className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
-        >
-          <Sparkles className='w-3 h-3 text-blue-600' />
-        </button>
+        <p className='text-2xl font-bold text-gray-800'>
+          &#8377;{stats.arr.toFixed(2)}
+        </p>
+        <div className={`text-xs flex items-center gap-1 mt-1 ${getGrowthColor(stats.arrGrowth)}`}>
+          {getGrowthIcon(stats.arrGrowth)}
+          <span>
+            {stats.arrGrowth > 0 ? '+' : ''}
+            {stats.arrGrowth.toFixed(1)}% from last month
+          </span>
+        </div>
       </div>
-      <p className='text-2xl font-bold text-gray-800'>
-        ₹{stats.arr.toFixed(2)}
-      </p>
-      <div className={`text-xs flex items-center gap-1 mt-1 ${getGrowthColor(stats.arrGrowth)}`}>
-        {getGrowthIcon(stats.arrGrowth)}
-        <span>
-          {stats.arrGrowth > 0 ? '+' : ''}
-          {stats.arrGrowth.toFixed(1)}% from last month
-        </span>
+      <div className='bg-pink-100 text-pink-500 rounded-full p-3'>
+        <TrendingUp className='w-6 h-6' />
       </div>
     </div>
-    <div className='bg-pink-100 text-pink-500 rounded-full p-3'>
-      <BarChart2 className='w-6 h-6' />
-    </div>
-  </div>
+  )}
 
   {/* Upcoming Renewals */}
   <div className='bg-white p-6 rounded-xl shadow-sm flex items-center justify-between'>

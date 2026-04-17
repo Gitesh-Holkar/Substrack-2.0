@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Bell } from 'lucide-react'
+import { Bell, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
 
@@ -21,6 +21,7 @@ export function NotificationBell() {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [isOpen, setIsOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const supabase = createClient()
@@ -51,7 +52,7 @@ export function NotificationBell() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user])
+  }, [user, dismissedIds])
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -195,8 +196,9 @@ export function NotificationBell() {
       // Sort by timestamp
       allNotifications.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
 
-      setNotifications(allNotifications.slice(0, 20))
-      setUnreadCount(allNotifications.length)
+      const visible = allNotifications.filter((n) => !dismissedIds.has(n.id)).slice(0, 20)
+      setNotifications(visible)
+      setUnreadCount(visible.length)
     } catch (error) {
       console.error('Error loading notifications:', error)
     }
@@ -230,6 +232,12 @@ export function NotificationBell() {
       default:
         return 'bg-gray-50 border-gray-200'
     }
+  }
+
+  const dismissNotification = (id: string): void => {
+    setDismissedIds((prev) => new Set([...prev, id]))
+    setNotifications((prev) => prev.filter((n) => n.id !== id))
+    setUnreadCount((prev) => Math.max(0, prev - 1))
   }
 
   const formatTimestamp = (timestamp: string) => {
@@ -304,6 +312,16 @@ export function NotificationBell() {
                           {formatTimestamp(notification.timestamp)}
                         </p>
                       </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          dismissNotification(notification.id)
+                        }}
+                        className="flex-shrink-0 text-gray-300 hover:text-gray-500 transition-colors rounded p-0.5 mt-0.5"
+                        aria-label="Dismiss notification"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   </li>
                 ))}

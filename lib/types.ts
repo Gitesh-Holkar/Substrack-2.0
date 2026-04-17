@@ -87,7 +87,7 @@ export interface Subscriber {
   plan_id: string
   customer_name: string
   customer_email: string
-  status: 'active' | 'cancelled' | 'failed' | 'past_due'
+  status: 'active' | 'cancelled' | 'failed' | 'past_due' | 'pending'
 
   payment_provider: PaymentProvider
 
@@ -103,6 +103,12 @@ export interface Subscriber {
   next_renewal_date?: string
   last_payment_date?: string
   last_payment_amount?: number
+  cancelled_at?: string
+
+  // Dunning lifecycle
+  dunning_step?: number
+  dunning_started_at?: string
+  next_retry_at?: string
 
   created_at: string
   updated_at: string
@@ -213,6 +219,8 @@ export interface MerchantContextDocument {
   }
   subscribers: {
     active: number
+    past_due: number
+    revenue_at_risk: number
     new_this_month: number
     cancelled_this_month: number
     net_change_this_month: number

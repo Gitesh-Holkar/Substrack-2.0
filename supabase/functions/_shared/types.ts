@@ -102,9 +102,16 @@ export interface Subscriber {
   next_renewal_date: string | null
   last_payment_date: string | null
   last_payment_amount: number | null
+  cancelled_at: string | null
 
   // Which gateway this subscriber uses
   payment_provider: PaymentProvider
+
+  // Dunning lifecycle columns — added in migration 20260416000001
+  // 0 = not in dunning, 1 = day1 sent, 2 = day3 sent, 3 = day7 sent
+  dunning_step: number
+  dunning_started_at: string | null
+  next_retry_at: string | null
 
   // Unified provider fields (new columns from migration)
   // These are the canonical fields for all new code.

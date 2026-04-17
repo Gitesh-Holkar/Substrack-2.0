@@ -61,6 +61,11 @@ interface PaymentStatusRow {
   status: string
 }
 
+interface PastDueSubscriberRow {
+  id: string
+  last_payment_amount: number | null
+}
+
 function getSinglePlan(
   plan: ContextSubscriberPlan | ContextSubscriberPlan[] | null
 ): ContextSubscriberPlan | null {
@@ -112,6 +117,12 @@ export async function computeMerchantContext(
     .lte('next_renewal_date', sevenDaysFromNow)
     .gte('next_renewal_date', now.toISOString())
 
+  const { data: pastDueSubscribers } = await serviceSupabase
+    .from('subscribers')
+    .select('id, last_payment_amount')
+    .eq('merchant_id', merchantId)
+    .eq('status', 'past_due')
+
   const { data: failedPayments } = await serviceSupabase
     .from('payment_transactions')
     .select('id, status')
@@ -135,6 +146,7 @@ export async function computeMerchantContext(
   const newThisMonthRows = (newThisMonth ?? []) as NewSubscriberRow[]
   const lastMonthActiveRows = (lastMonthActive ?? []) as LastMonthActiveRow[]
   const upcomingRenewalRows = (upcomingRenewals ?? []) as UpcomingRenewalRow[]
+  const pastDueRows = (pastDueSubscribers ?? []) as PastDueSubscriberRow[]
   const failedPaymentRows = (failedPayments ?? []) as PaymentStatusRow[]
   const totalPaymentRows = (totalPayments ?? []) as PaymentStatusRow[]
   const planRows = (plans ?? []) as ContextPlanRow[]
@@ -252,6 +264,11 @@ export async function computeMerchantContext(
       }).length / activeCount > 0.3
     : false
 
+  const pastDueCount = pastDueRows.length
+  const revenueAtRisk = pastDueRows.reduce(
+    (sum, sub) => sum + (sub.last_payment_amount ?? 0),
+    0
+  )
   const failedCount = failedPaymentRows.length
   const totalCount = totalPaymentRows.length
 
@@ -271,6 +288,8 @@ export async function computeMerchantContext(
     },
     subscribers: {
       active: activeCount,
+      past_due: pastDueCount,
+      revenue_at_risk: revenueAtRisk,
       new_this_month: newThisMonthRows.length,
       cancelled_this_month: cancelledCount,
       net_change_this_month: newThisMonthRows.length - cancelledCount,

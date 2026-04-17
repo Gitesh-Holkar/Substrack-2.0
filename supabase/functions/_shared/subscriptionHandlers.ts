@@ -200,7 +200,7 @@ async function onPaymentSucceeded(
 ): Promise<void> {
   const { data: subscriber } = await supabase
     .from('subscribers')
-    .select('id, merchant_id, plan_id, customer_name, customer_email')
+    .select('id, merchant_id, plan_id, customer_name, customer_email, dunning_step')
     .eq('provider_subscription_id', event.providerSubscriptionId)
     .limit(1)
     .single()
@@ -222,6 +222,9 @@ async function onPaymentSucceeded(
     status: 'active',
     last_payment_date: new Date().toISOString(),
     last_payment_amount: event.amount,
+    dunning_step: 0,
+    dunning_started_at: null,
+    next_retry_at: null,
   }
   if (event.nextRenewalDate) {
     updates.next_renewal_date = event.nextRenewalDate.toISOString()
@@ -295,25 +298,41 @@ async function onPaymentFailed(
 ): Promise<void> {
   const { data: subscriber } = await supabase
     .from('subscribers')
-    .select('id, merchant_id, plan_id, customer_name, customer_email')
+    .select('id, merchant_id, plan_id, customer_name, customer_email, start_date')
     .eq('provider_subscription_id', event.providerSubscriptionId)
     .limit(1)
     .single()
 
   if (!subscriber) {
-    console.log('No subscriber found for:', event.providerSubscriptionId)
+    console.log('No subscriber found for failed payment:', event.providerSubscriptionId)
     return
   }
 
-  await supabase
-    .from('subscribers')
-    .update({ status: 'failed' })
-    .eq('id', subscriber.id)
+  // Fetch plan once — used for trial guard and email
+  const { data: plan } = await supabase
+    .from('subscription_plans')
+    .select('name, trial_period_days, billing_cycle')
+    .eq('id', subscriber.plan_id)
+    .single()
+
+  // Guard: do not start dunning if subscriber is still within their trial period
+  const trialDays = plan?.trial_period_days ?? 0
+  if (trialDays > 0 && subscriber.start_date) {
+    const trialEndDate = new Date(subscriber.start_date)
+    trialEndDate.setDate(trialEndDate.getDate() + trialDays)
+    if (new Date() < trialEndDate) {
+      console.log('Payment failed during active trial — skipping dunning:', subscriber.id)
+      return
+    }
+  }
+
+  // Record failed transaction with stable idempotency key (no Date.now())
+  const failedPaymentId = `failed_${event.providerSubscriptionId}_${event.amount}`
 
   const { data: existingTx } = await supabase
     .from('payment_transactions')
     .select('id')
-    .eq('provider_payment_id', `failed_${event.providerSubscriptionId}_${Date.now()}`)
+    .eq('provider_payment_id', failedPaymentId)
     .limit(1)
     .single()
 
@@ -325,16 +344,24 @@ async function onPaymentFailed(
       amount: event.amount,
       status: 'failed',
       payment_provider: event.provider,
-      provider_payment_id: `failed_${event.providerSubscriptionId}_${Date.now()}`,
+      provider_payment_id: failedPaymentId,
       payment_date: new Date().toISOString(),
     })
   }
 
-  const { data: plan } = await supabase
-    .from('subscription_plans')
-    .select('name')
-    .eq('id', subscriber.plan_id)
-    .single()
+  // Start dunning: move to past_due, set step 1, schedule next check in 1 day
+  const nextRetryAt = new Date()
+  nextRetryAt.setDate(nextRetryAt.getDate() + 1)
+
+  await supabase
+    .from('subscribers')
+    .update({
+      status: 'past_due',
+      dunning_step: 1,
+      dunning_started_at: new Date().toISOString(),
+      next_retry_at: nextRetryAt.toISOString(),
+    })
+    .eq('id', subscriber.id)
 
   const planName = plan?.name ?? 'Subscription'
 
@@ -342,8 +369,8 @@ async function onPaymentFailed(
     supabase,
     subscriber.customer_email,
     `${merchant.business_name} <no-reply@substrack.work.gd>`,
-    `Payment Failed - Action Required`,
-    getPaymentFailedEmailHtml(
+    `Payment couldn't be processed — ${planName}`,
+    getDunningDay1EmailHtml(
       subscriber.customer_name,
       planName,
       event.amount,
@@ -351,6 +378,8 @@ async function onPaymentFailed(
       merchant.email,
     ),
   )
+
+  console.log('Dunning started | subscriber:', subscriber.id, '| step: 1')
 }
 
 async function onPaymentProcessing(
@@ -373,7 +402,7 @@ async function onSubscriptionCancelled(
 ): Promise<void> {
   const { data: subscriber } = await supabase
     .from('subscribers')
-    .select('id, plan_id')
+    .select('id, merchant_id, plan_id, customer_name, customer_email')
     .eq('provider_subscription_id', event.providerSubscriptionId)
     .limit(1)
     .single()
@@ -392,6 +421,62 @@ async function onSubscriptionCancelled(
     .eq('id', subscriber.id)
 
   await supabase.rpc('decrement_subscriber_count', { p_plan_id: subscriber.plan_id })
+
+  // Fetch merchant name for resubscribe email from address
+  const { data: merchantRow } = await supabase
+    .from('merchants')
+    .select('business_name')
+    .eq('id', subscriber.merchant_id)
+    .single()
+
+  // Fetch cancelled plan details
+  const { data: cancelledPlan } = await supabase
+    .from('subscription_plans')
+    .select('name, price, billing_cycle')
+    .eq('id', subscriber.plan_id)
+    .single()
+
+  // Find next higher-priced active plan for optional upsell (auto-detected by price)
+  const { data: higherPlans } = await supabase
+    .from('subscription_plans')
+    .select('id, name, price, billing_cycle')
+    .eq('merchant_id', subscriber.merchant_id)
+    .eq('is_active', true)
+    .is('archived_at', null)
+    .gt('price', cancelledPlan?.price ?? 0)
+    .order('price', { ascending: true })
+    .limit(1)
+
+  const higherPlan = higherPlans?.[0] ?? null
+  const businessName = merchantRow?.business_name ?? 'Your subscription provider'
+
+  if (cancelledPlan) {
+    const resubscribeUrl = `https://substrack.work.gd/subscribe/${subscriber.plan_id}`
+    const higherPlanUrl = higherPlan
+      ? `https://substrack.work.gd/subscribe/${higherPlan.id}`
+      : null
+
+    await sendEmail(
+      supabase,
+      subscriber.customer_email,
+      `${businessName} <no-reply@substrack.work.gd>`,
+      `Your subscription has been cancelled`,
+      getResubscribeEmailHtml(
+        subscriber.customer_name,
+        cancelledPlan.name,
+        businessName,
+        resubscribeUrl,
+        higherPlan && higherPlanUrl
+          ? {
+              name: higherPlan.name,
+              price: higherPlan.price,
+              billing_cycle: higherPlan.billing_cycle,
+              url: higherPlanUrl,
+            }
+          : null,
+      ),
+    )
+  }
 
   console.log('Subscription cancelled:', event.providerSubscriptionId)
 }
@@ -734,5 +819,105 @@ function getPaymentFailedEmailHtml(
     </div>
     <p>Please update your payment method to continue your subscription.</p>
     <div class="footer"><p>Need help? Contact ${merchantEmail}</p><p style="font-size:12px;color:#9ca3af">Automated notice from ${merchantName}</p></div>
+  `)
+}
+
+// ---------------------------------------------------------------------------
+// DUNNING + RESUBSCRIBE EMAIL HELPERS
+// ---------------------------------------------------------------------------
+
+function getDunningDay1EmailHtml(
+  customerName: string,
+  planName: string,
+  amount: number,
+  businessName: string,
+  merchantEmail: string,
+): string {
+  return baseEmailWrapper('#f59e0b', `Payment couldn't be processed`, `
+    <p>Hi ${customerName},</p>
+    <p>We were unable to process your payment of <strong>₹${amount.toFixed(2)}</strong> for your <strong>${planName}</strong> subscription with ${businessName}.</p>
+    <p>This can happen due to insufficient balance, a bank restriction, or a UPI mandate issue. <strong>No action is needed right now</strong> — we will attempt to process it again in a day.</p>
+    <p>If you would like to ensure there is no interruption, please check your UPI autopay settings or card details with your bank.</p>
+    <div class="footer">
+      <p>Questions? Contact us at ${merchantEmail}</p>
+      <p style="font-size:12px;color:#9ca3af">Automated notice from ${businessName}</p>
+    </div>
+  `)
+}
+
+function getDunningDay3EmailHtml(
+  customerName: string,
+  planName: string,
+  amount: number,
+  businessName: string,
+  merchantEmail: string,
+): string {
+  return baseEmailWrapper('#f59e0b', `Payment still pending — action may be needed`, `
+    <p>Hi ${customerName},</p>
+    <p>We have been unable to process your payment of <strong>₹${amount.toFixed(2)}</strong> for your <strong>${planName}</strong> subscription with ${businessName}.</p>
+    <div style="background:#fffbeb;border:1px solid #fde68a;padding:15px;border-radius:6px;margin:16px 0">
+      <p style="margin:0;color:#92400e">To avoid any interruption to your subscription, please check your UPI autopay mandate or ensure your payment method has sufficient balance.</p>
+    </div>
+    <p>We will try once more in a few days.</p>
+    <div class="footer">
+      <p>Questions? Contact us at ${merchantEmail}</p>
+      <p style="font-size:12px;color:#9ca3af">Automated notice from ${businessName}</p>
+    </div>
+  `)
+}
+
+function getDunningDay7EmailHtml(
+  customerName: string,
+  planName: string,
+  amount: number,
+  businessName: string,
+  merchantEmail: string,
+): string {
+  return baseEmailWrapper('#ef4444', `Final notice — subscription at risk`, `
+    <p>Hi ${customerName},</p>
+    <div style="background:#fef2f2;border:1px solid #fecaca;padding:15px;border-radius:6px;margin:16px 0">
+      <p style="margin:0;color:#991b1b"><strong>This is our final attempt to collect your payment of ₹${amount.toFixed(2)} for ${planName}.</strong></p>
+      <p style="margin:8px 0 0;color:#991b1b">If payment cannot be collected, your subscription will be cancelled.</p>
+    </div>
+    <p>Please check your UPI mandate or payment method immediately. Contact us if you believe this is an error.</p>
+    <div class="footer">
+      <p>Questions? Contact us at ${merchantEmail}</p>
+      <p style="font-size:12px;color:#9ca3af">Automated notice from ${businessName}</p>
+    </div>
+  `)
+}
+
+function getResubscribeEmailHtml(
+  customerName: string,
+  planName: string,
+  businessName: string,
+  resubscribeUrl: string,
+  higherPlan: {
+    name: string
+    price: number
+    billing_cycle: string
+    url: string
+  } | null,
+): string {
+  const upsellSection = higherPlan
+    ? `
+    <div style="margin:24px 0;padding:16px;background:#f0f9ff;border-radius:6px;border:1px solid #bae6fd">
+      <p style="color:#0369a1;font-weight:600;margin:0 0 4px">Or explore an upgrade</p>
+      <p style="color:#374151;font-size:14px;margin:0 0 12px">${higherPlan.name} — ₹${higherPlan.price.toFixed(2)} / ${higherPlan.billing_cycle}</p>
+      <a href="${higherPlan.url}" style="display:inline-block;padding:10px 20px;background:#0369a1;color:#fff;text-decoration:none;border-radius:6px;font-size:14px">Explore ${higherPlan.name}</a>
+    </div>`
+    : ''
+
+  return baseEmailWrapper('#6b7280', `Your subscription has been cancelled`, `
+    <p>Hi ${customerName},</p>
+    <p>Your <strong>${planName}</strong> subscription with ${businessName} has been cancelled.</p>
+    <p>You can resubscribe anytime — your history is saved.</p>
+    <div style="margin:24px 0">
+      <a href="${resubscribeUrl}" style="display:inline-block;padding:12px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Resubscribe to ${planName}</a>
+    </div>
+    ${upsellSection}
+    <div class="footer">
+      <p style="font-size:12px;color:#9ca3af">You received this because you had an active subscription with ${businessName}.</p>
+    </div>
   `)
 }

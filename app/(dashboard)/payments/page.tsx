@@ -12,6 +12,7 @@ interface PaymentTransaction {
   status: 'success' | 'failed' | 'pending'
   payment_date: string
   stripe_payment_id?: string
+  payment_provider: string
   subscriber: {
     customer_name: string
     customer_email: string
@@ -32,6 +33,9 @@ export default function PaymentsPage() {
   const [planFilter, setPlanFilter] = useState<string>('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [availablePlans, setAvailablePlans] = useState<string[]>([])
+  const [providerFilter, setProviderFilter] = useState<string>('all')
+  const [dateFrom, setDateFrom] = useState<string>('')
+  const [dateTo, setDateTo] = useState<string>('')
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1)
@@ -45,7 +49,7 @@ export default function PaymentsPage() {
 
   useEffect(() => {
     filterTransactions()
-  }, [searchQuery, statusFilter, planFilter, transactions])
+  }, [searchQuery, statusFilter, planFilter, providerFilter, dateFrom, dateTo, transactions])
 
   const loadTransactions = async () => {
     try {
@@ -58,6 +62,7 @@ export default function PaymentsPage() {
           status,
           payment_date,
           stripe_payment_id,
+          payment_provider,
           subscribers (
             customer_name,
             customer_email
@@ -79,6 +84,7 @@ export default function PaymentsPage() {
         status: tx.status,
         payment_date: tx.payment_date,
         stripe_payment_id: tx.stripe_payment_id,
+        payment_provider: tx.payment_provider ?? 'stripe',
         subscriber: {
           customer_name: tx.subscribers?.customer_name || 'Unknown',
           customer_email: tx.subscribers?.customer_email || '',
@@ -126,6 +132,21 @@ export default function PaymentsPage() {
     // Plan filter
     if (planFilter !== 'all') {
       filtered = filtered.filter((tx) => tx.plan.name === planFilter)
+    }
+
+    // Provider filter
+    if (providerFilter !== 'all') {
+      filtered = filtered.filter((tx) => tx.payment_provider === providerFilter)
+    }
+
+    // Date range filter
+    if (dateFrom) {
+      filtered = filtered.filter((tx) => new Date(tx.payment_date) >= new Date(dateFrom))
+    }
+    if (dateTo) {
+      const to = new Date(dateTo)
+      to.setHours(23, 59, 59, 999)
+      filtered = filtered.filter((tx) => new Date(tx.payment_date) <= to)
     }
 
     setFilteredTransactions(filtered)
@@ -288,9 +309,9 @@ export default function PaymentsPage() {
             >
               <Filter className='w-4 h-4 mr-2' />
               Filter
-              {(statusFilter !== 'all' || planFilter !== 'all') && (
+              {(statusFilter !== 'all' || planFilter !== 'all' || providerFilter !== 'all' || !!dateFrom || !!dateTo) && (
                 <span className='ml-2 px-2 py-0.5 bg-blue-100 text-blue-600 text-xs rounded-full'>
-                  {(statusFilter !== 'all' ? 1 : 0) + (planFilter !== 'all' ? 1 : 0)}
+                  {(statusFilter !== 'all' ? 1 : 0) + (planFilter !== 'all' ? 1 : 0) + (providerFilter !== 'all' ? 1 : 0) + (dateFrom ? 1 : 0) + (dateTo ? 1 : 0)}
                 </span>
               )}
             </button>
@@ -372,14 +393,50 @@ export default function PaymentsPage() {
                     </div>
                   </div>
 
+                  {/* Date Range */}
+                  <div className='border-t border-gray-100 pt-3 mt-1'>
+                    <p className='text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2'>Payment Date</p>
+                    <div className='flex gap-2'>
+                      <input
+                        type='date'
+                        value={dateFrom}
+                        onChange={(e) => setDateFrom(e.target.value)}
+                        className='flex-1 text-xs border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500'
+                      />
+                      <input
+                        type='date'
+                        value={dateTo}
+                        onChange={(e) => setDateTo(e.target.value)}
+                        className='flex-1 text-xs border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500'
+                      />
+                    </div>
+                  </div>
+
+                  {/* Provider */}
+                  <div className='mt-3'>
+                    <p className='text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2'>Provider</p>
+                    {(['all', 'stripe', 'cashfree'] as const).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setProviderFilter(p)}
+                        className={`block w-full text-left px-3 py-2 rounded text-sm mb-1 ${providerFilter === p ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
+                      >
+                        {p === 'all' ? 'All Providers' : p.charAt(0).toUpperCase() + p.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+
                   {/* Clear All Filters */}
-                  {(statusFilter !== 'all' || planFilter !== 'all') && (
+                  {(statusFilter !== 'all' || planFilter !== 'all' || providerFilter !== 'all' || !!dateFrom || !!dateTo) && (
                     <>
                       <div className='border-t border-gray-200 my-3'></div>
                       <button
                         onClick={() => {
                           setStatusFilter('all')
                           setPlanFilter('all')
+                          setProviderFilter('all')
+                          setDateFrom('')
+                          setDateTo('')
                           setShowFilterMenu(false)
                         }}
                         className='block w-full text-center px-3 py-2 rounded text-sm text-red-600 hover:bg-red-50'
@@ -419,12 +476,15 @@ export default function PaymentsPage() {
             Payment transactions will appear here once subscribers make
             payments
           </p>
-          {searchQuery || statusFilter !== 'all' || planFilter !== 'all' ? (
+          {searchQuery || statusFilter !== 'all' || planFilter !== 'all' || providerFilter !== 'all' || !!dateFrom || !!dateTo ? (
             <button
               onClick={() => {
                 setSearchQuery('')
                 setStatusFilter('all')
                 setPlanFilter('all')
+                setProviderFilter('all')
+                setDateFrom('')
+                setDateTo('')
               }}
               className='mt-4 text-blue-600 hover:text-blue-700 text-sm'
             >

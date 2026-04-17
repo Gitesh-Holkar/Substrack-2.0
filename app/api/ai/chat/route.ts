@@ -392,6 +392,8 @@ Churn rate: ${ctx.subscribers.churn_rate_percent}% this month
 New subscribers this month: ${ctx.subscribers.new_this_month}
 Cancelled this month: ${ctx.subscribers.cancelled_this_month}
 Failed payments this month: ${ctx.payments.failed_this_month}/${ctx.payments.total_this_month} (${ctx.payments.failed_payment_rate_percent}%)
+Subscribers in dunning (past_due): ${ctx.subscribers.past_due}
+Revenue at risk from dunning: ₹${ctx.subscribers.revenue_at_risk.toFixed(2)}
 Upcoming renewals (7 days): ${ctx.subscribers.upcoming_renewals_7d}
 Plans: ${ctx.plans.map((plan) => `${plan.plan_name} (${plan.active_subscribers} active, ₹${plan.price}/${plan.billing_cycle})`).join(', ')}
 Current page in dashboard: ${currentPage ?? 'unknown'}
