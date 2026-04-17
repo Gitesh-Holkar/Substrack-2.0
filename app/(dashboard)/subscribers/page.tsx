@@ -306,9 +306,9 @@ function SubscribersPageInner() {
 
                 <div className='mb-4'>
                   <label className='block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide'>Start Date</label>
-                  <div className='flex gap-2'>
-                    <input type='date' value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className='flex-1 text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500' />
-                    <input type='date' value={dateTo} onChange={(e) => setDateTo(e.target.value)} className='flex-1 text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500' />
+                  <div className='flex flex-col gap-1.5'>
+                    <input type='date' value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className='w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500' />
+                    <input type='date' value={dateTo} onChange={(e) => setDateTo(e.target.value)} className='w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500' />
                   </div>
                 </div>
 
