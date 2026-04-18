@@ -112,8 +112,8 @@ function SubscribersPageInner() {
         .order('created_at', { ascending: false })
 
       if (error) throw error
-
-      const formatted: SubscriberWithPlan[] = (data ?? []).map((sub: SubscriberRow) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const formatted: SubscriberWithPlan[] = (data ?? []).map((sub: any) => {
         const plan = sub.subscription_plans
 
         return {
