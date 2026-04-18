@@ -13,9 +13,12 @@ import {
   Copy,
   Upload,
   Image as ImageIcon,
+  AlertTriangle,
 } from 'lucide-react'
 import Image from 'next/image'
 import { IntegrationsTab } from '@/components/dashboard/IntegrationsTab'
+import { isGatewayCredentialsSaved } from '@/lib/gateway'
+import type { GatewayProvider } from '@/lib/gateway'
 
 interface StripeConstructor {
   new (apiKey: string, config: { apiVersion: string; httpClient?: unknown }): {
@@ -52,6 +55,9 @@ export default function Settings() {
   const [showCashfreeSecret, setShowCashfreeSecret] = useState(false)
   const [paymentProvider, setPaymentProvider] = useState<'stripe' | 'cashfree'>('stripe')
   const [switchingProvider, setSwitchingProvider] = useState(false)
+  const [pendingSwitchProvider, setPendingSwitchProvider] = useState<GatewayProvider | null>(null)
+  const [showSwitchModal, setShowSwitchModal] = useState(false)
+  const [selectedGateway, setSelectedGateway] = useState<'stripe' | 'cashfree'>('stripe')
 
   // ✅ FIX #1: Window access - Initialize as empty, set in useEffect
   const [webhookUrl, setWebhookUrl] = useState('')
@@ -107,7 +113,9 @@ export default function Settings() {
         cashfree_app_id: merchantPaymentConfig.cashfree_app_id || '',
         cashfree_secret_key: merchantPaymentConfig.cashfree_secret_key || '',
       })
-      setPaymentProvider(merchantPaymentConfig.payment_provider || 'stripe')
+      const activeProvider = merchantPaymentConfig.payment_provider || 'stripe'
+      setPaymentProvider(activeProvider)
+      setSelectedGateway(activeProvider)
       setLogoPreview(merchant.logo_url || null)
     }
   }, [merchant])
@@ -312,31 +320,47 @@ export default function Settings() {
     }
   }
 
-  const handleProviderSwitch = async (provider: 'stripe' | 'cashfree') => {
+  const requestProviderSwitch = (provider: GatewayProvider): void => {
+    if (provider === paymentProvider) return
+    setPendingSwitchProvider(provider)
+    setShowSwitchModal(true)
+  }
+
+  const confirmProviderSwitch = async (): Promise<void> => {
+    if (!pendingSwitchProvider) return
+
     setSwitchingProvider(true)
+    setShowSwitchModal(false)
     try {
       const { error } = await supabase
         .from('merchants')
-        .update({ payment_provider: provider })
+        .update({ payment_provider: pendingSwitchProvider })
         .eq('id', user!.id)
 
       if (error) throw error
 
-      setPaymentProvider(provider)
+      setPaymentProvider(pendingSwitchProvider)
       await refreshMerchant()
       setSuccessMessage(
-        `Payment gateway switched to ${provider === 'stripe' ? 'Stripe' : 'Cashfree'}`
+        `Payment gateway switched to ${pendingSwitchProvider === 'stripe' ? 'Stripe' : 'Cashfree'}`
       )
       setTimeout(() => setSuccessMessage(''), 3000)
-    } catch (error) {
-      console.error('Error switching provider:', error)
+    } catch (err) {
+      console.error('Error switching provider:', err)
       alert('Failed to switch payment provider')
     } finally {
       setSwitchingProvider(false)
+      setPendingSwitchProvider(null)
     }
   }
 
+  const cancelProviderSwitch = (): void => {
+    setShowSwitchModal(false)
+    setPendingSwitchProvider(null)
+  }
+
   return (
+    <>
       <div className='w-full max-w-5xl'>
         {successMessage && (
           <div className='mb-6 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-md flex items-center'>
@@ -591,36 +615,61 @@ export default function Settings() {
                     Switching takes effect immediately for new subscriptions.
                   </p>
                   <div className='flex gap-3'>
-                    <button
-                      type='button'
-                      onClick={() => handleProviderSwitch('stripe')}
-                      disabled={switchingProvider || paymentProvider === 'stripe'}
-                      className={`flex-1 py-3 px-4 rounded-lg border-2 text-sm font-medium transition-colors ${
-                        paymentProvider === 'stripe'
-                          ? 'border-blue-600 bg-blue-50 text-blue-700'
-                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      {paymentProvider === 'stripe' && <Check className='w-4 h-4 inline mr-2' />}
-                      Stripe (International)
-                    </button>
-                    <button
-                      type='button'
-                      onClick={() => handleProviderSwitch('cashfree')}
-                      disabled={switchingProvider || paymentProvider === 'cashfree'}
-                      className={`flex-1 py-3 px-4 rounded-lg border-2 text-sm font-medium transition-colors ${
-                        paymentProvider === 'cashfree'
-                          ? 'border-blue-600 bg-blue-50 text-blue-700'
-                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      {paymentProvider === 'cashfree' && <Check className='w-4 h-4 inline mr-2' />}
-                      Cashfree (India)
-                    </button>
+                    {(['stripe', 'cashfree'] as const).map((provider) => {
+                      const isActive = paymentProvider === provider
+                      const isSelected = selectedGateway === provider
+                      const isConfigured = merchant
+                        ? isGatewayCredentialsSaved(merchant, provider)
+                        : false
+                      const label =
+                        provider === 'stripe' ? 'Stripe (International)' : 'Cashfree (India)'
+
+                      return (
+                        <button
+                          key={provider}
+                          type='button'
+                          onClick={() => setSelectedGateway(provider)}
+                          className={`flex-1 py-3 px-4 rounded-lg border-2 text-sm font-medium transition-colors text-left ${
+                            isActive
+                              ? 'border-blue-600 bg-blue-50 text-blue-700'
+                              : isConfigured
+                                ? 'border-green-400 bg-green-50 text-green-700 hover:border-green-500'
+                                : isSelected
+                                  ? 'border-gray-400 bg-gray-50 text-gray-700'
+                                  : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                          }`}
+                        >
+                          <span className='flex items-center gap-2'>
+                            {isActive && <Check className='w-4 h-4 flex-shrink-0 text-blue-600' />}
+                            {!isActive && isConfigured && (
+                              <Check className='w-4 h-4 flex-shrink-0 text-green-500' />
+                            )}
+                            <span>
+                              {label}
+                              {isActive && (
+                                <span className='block text-xs font-normal text-blue-600 mt-0.5'>
+                                  Active gateway
+                                </span>
+                              )}
+                              {!isActive && isConfigured && (
+                                <span className='block text-xs font-normal text-green-600 mt-0.5'>
+                                  Configured
+                                </span>
+                              )}
+                              {!isActive && !isConfigured && (
+                                <span className='block text-xs font-normal text-gray-400 mt-0.5'>
+                                  Not configured
+                                </span>
+                              )}
+                            </span>
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
 
-                {paymentProvider === 'cashfree' && (
+                {selectedGateway === 'cashfree' && (
                   <>
                     {/* Cashfree Credentials */}
                     <div className='bg-white rounded-lg border border-gray-200 p-6 mb-6'>
@@ -694,10 +743,37 @@ export default function Settings() {
                         </button>
                       </form>
                     </div>
+
+                    {merchant &&
+                      isGatewayCredentialsSaved(merchant, 'cashfree') &&
+                      paymentProvider !== 'cashfree' && (
+                        <div className='bg-white rounded-lg border border-gray-200 p-6'>
+                          <h3 className='text-sm font-semibold text-gray-800 mb-1'>
+                            Activate Cashfree
+                          </h3>
+                          <p className='text-sm text-gray-500 mb-4'>
+                            New subscribers will be charged through Cashfree. Existing subscribers
+                            stay on their current gateway until they resubscribe.
+                          </p>
+                          <button
+                            type='button'
+                            onClick={() => requestProviderSwitch('cashfree')}
+                            disabled={switchingProvider}
+                            className='px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2'
+                          >
+                            {switchingProvider ? (
+                              <RefreshCw className='w-4 h-4 animate-spin' />
+                            ) : (
+                              <Check className='w-4 h-4' />
+                            )}
+                            Set Cashfree as Active Gateway
+                          </button>
+                        </div>
+                      )}
                   </>
                 )}
 
-                {paymentProvider === 'stripe' && (
+                {selectedGateway === 'stripe' && (
                   <form onSubmit={handleStripeSubmit} className='space-y-6'>
                   <div>
                     <h3 className='text-lg font-semibold text-gray-800 mb-2'>
@@ -940,6 +1016,33 @@ export default function Settings() {
                       {loading ? 'Saving...' : 'Save API Keys'}
                     </button>
                   </div>
+
+                  {merchant &&
+                    isGatewayCredentialsSaved(merchant, 'stripe') &&
+                    paymentProvider !== 'stripe' && (
+                      <div className='mt-6 pt-6 border-t border-gray-200'>
+                        <h3 className='text-sm font-semibold text-gray-800 mb-1'>
+                          Activate Stripe
+                        </h3>
+                        <p className='text-sm text-gray-500 mb-4'>
+                          New subscribers will be charged through Stripe. Existing subscribers
+                          stay on their current gateway until they resubscribe.
+                        </p>
+                        <button
+                          type='button'
+                          onClick={() => requestProviderSwitch('stripe')}
+                          disabled={switchingProvider}
+                          className='px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2'
+                        >
+                          {switchingProvider ? (
+                            <RefreshCw className='w-4 h-4 animate-spin' />
+                          ) : (
+                            <Check className='w-4 h-4' />
+                          )}
+                          Set Stripe as Active Gateway
+                        </button>
+                      </div>
+                    )}
                   </form>
                 )}
               </>
@@ -954,6 +1057,51 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      {showSwitchModal && pendingSwitchProvider && (
+        <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4'>
+          <div className='bg-white rounded-xl shadow-xl p-6 max-w-md w-full'>
+            <div className='flex items-start gap-3 mb-4'>
+              <div className='w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center flex-shrink-0'>
+                <AlertTriangle className='w-5 h-5 text-yellow-600' />
+              </div>
+              <div>
+                <h3 className='text-base font-semibold text-gray-900'>
+                  Switch from {paymentProvider === 'stripe' ? 'Stripe' : 'Cashfree'} to{' '}
+                  {pendingSwitchProvider === 'stripe' ? 'Stripe' : 'Cashfree'}?
+                </h3>
+                <p className='text-sm text-gray-600 mt-1'>
+                  All new subscribers will be charged through{' '}
+                  {pendingSwitchProvider === 'stripe' ? 'Stripe' : 'Cashfree'} immediately.
+                </p>
+                <p className='text-sm text-gray-600 mt-2'>
+                  Your existing subscribers stay on{' '}
+                  <strong>{paymentProvider === 'stripe' ? 'Stripe' : 'Cashfree'}</strong> until
+                  they cancel and resubscribe. You can switch back at any time.
+                </p>
+              </div>
+            </div>
+            <div className='flex gap-3 justify-end mt-6'>
+              <button
+                type='button'
+                onClick={cancelProviderSwitch}
+                className='px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50'
+              >
+                Cancel
+              </button>
+              <button
+                type='button'
+                onClick={confirmProviderSwitch}
+                disabled={switchingProvider}
+                className='px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50'
+              >
+                {switchingProvider ? 'Switching...' : 'Yes, switch gateway'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 

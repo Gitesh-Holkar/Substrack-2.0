@@ -149,9 +149,8 @@ export default function SubscribePage() {
         if (!data?.url) throw new Error('No checkout URL returned')
         window.location.href = data.url as string
       }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to initiate payment. Please try again.'
-      setError(message)
+    } catch {
+      setError('checkout_failed')
       setProcessing(false)
     }
   }
@@ -160,6 +159,48 @@ export default function SubscribePage() {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+      </div>
+    )
+  }
+
+  if (error === 'checkout_failed') {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center">
+          <div className="text-yellow-500 text-5xl mb-4">⚠️</div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">Payment Unavailable</h2>
+          <p className="text-gray-600 mb-4">
+            We could not start your payment session. This is usually a temporary issue on the
+            merchant&apos;s side.
+          </p>
+          {merchant && (
+            <p className="text-sm text-gray-500">
+              Please contact <strong>{merchant.business_name}</strong>
+              {merchant.email && (
+                <>
+                  {' '}at{' '}
+                  <a
+                    href={`mailto:${merchant.email}`}
+                    className="text-blue-600 underline"
+                  >
+                    {merchant.email}
+                  </a>
+                </>
+              )}{' '}
+              for assistance.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setError('')
+              setProcessing(false)
+            }}
+            className="mt-6 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+          >
+            Try Again
+          </button>
+        </div>
       </div>
     )
   }
@@ -350,7 +391,7 @@ export default function SubscribePage() {
 
             <p className="text-xs text-gray-500 text-center mt-4">
               Your payment will be processed securely by{' '}
-              {isCashfree ? 'Cashfree' : 'Stripe'}
+              {merchant?.payment_provider === 'cashfree' ? 'Cashfree' : 'Stripe'}
             </p>
           </form>
         </div>

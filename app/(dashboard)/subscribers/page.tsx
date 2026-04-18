@@ -31,6 +31,27 @@ interface PlanOption {
   name: string
 }
 
+interface SubscriberRow {
+  id: string
+  customer_name: string
+  customer_email: string
+  status: SubscriberStatus
+  start_date: string
+  next_renewal_date: string | null
+  last_payment_amount: number | null
+  last_payment_date: string | null
+  payment_provider: string | null
+  dunning_step: number | null
+  plan_id: string
+  subscription_plans?: {
+    id: string
+    name: string | null
+    price: number | null
+    billing_type: string | null
+    trial_period_days: number | null
+  } | null
+}
+
 function SubscribersPageInner() {
   const { user } = useAuth()
   const router = useRouter()
@@ -47,6 +68,7 @@ function SubscribersPageInner() {
   const [planFilter, setPlanFilter] = useState<string>('all')
   const [billingTypeFilter, setBillingTypeFilter] = useState<string>('all')
   const [providerFilter, setProviderFilter] = useState<string>('all')
+  const [hasMultipleProviders, setHasMultipleProviders] = useState(false)
   const [dateFrom, setDateFrom] = useState<string>('')
   const [dateTo, setDateTo] = useState<string>('')
   const [showFilterPanel, setShowFilterPanel] = useState(false)
@@ -78,7 +100,7 @@ function SubscribersPageInner() {
           payment_provider,
           dunning_step,
           plan_id,
-          subscription_plans!plan_id (
+          subscription_plans (
             id,
             name,
             price,
@@ -91,23 +113,27 @@ function SubscribersPageInner() {
 
       if (error) throw error
 
-      const formatted: SubscriberWithPlan[] = (data ?? []).map((sub: any) => ({
-        id: sub.id,
-        customer_name: sub.customer_name,
-        customer_email: sub.customer_email,
-        status: sub.status as SubscriberStatus,
-        start_date: sub.start_date,
-        next_renewal_date: sub.next_renewal_date,
-        last_payment_amount: sub.last_payment_amount,
-        last_payment_date: sub.last_payment_date,
-        plan_name: sub.subscription_plans?.name ?? 'Unknown Plan',
-        plan_id: sub.plan_id,
-        plan_price: sub.subscription_plans?.price ?? 0,
-        plan_billing_type: sub.subscription_plans?.billing_type ?? 'prepaid',
-        plan_trial_period_days: sub.subscription_plans?.trial_period_days ?? 0,
-        payment_provider: sub.payment_provider ?? 'stripe',
-        dunning_step: sub.dunning_step ?? 0,
-      }))
+      const formatted: SubscriberWithPlan[] = (data ?? []).map((sub: SubscriberRow) => {
+        const plan = sub.subscription_plans
+
+        return {
+          id: sub.id,
+          customer_name: sub.customer_name,
+          customer_email: sub.customer_email,
+          status: sub.status as SubscriberStatus,
+          start_date: sub.start_date,
+          next_renewal_date: sub.next_renewal_date,
+          last_payment_amount: sub.last_payment_amount,
+          last_payment_date: sub.last_payment_date,
+          plan_name: plan?.name ?? 'Unknown Plan',
+          plan_id: sub.plan_id,
+          plan_price: plan?.price ?? 0,
+          plan_billing_type: plan?.billing_type ?? 'prepaid',
+          plan_trial_period_days: plan?.trial_period_days ?? 0,
+          payment_provider: sub.payment_provider ?? 'stripe',
+          dunning_step: sub.dunning_step ?? 0,
+        }
+      })
 
       setSubscribers(formatted)
       setFilteredSubscribers(formatted)
@@ -121,6 +147,9 @@ function SubscribersPageInner() {
         }
       })
       setPlanOptions(options)
+
+      const uniqueProviders = new Set(formatted.map((s) => s.payment_provider))
+      setHasMultipleProviders(uniqueProviders.size > 1)
     } catch (err) {
       console.error('Error loading subscribers:', err)
     } finally {
@@ -323,16 +352,18 @@ function SubscribersPageInner() {
                   </div>
                 </div>
 
-                <div className='mb-4'>
-                  <label className='block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide'>Provider</label>
-                  <div className='flex gap-1.5'>
-                    {(['all', 'stripe', 'cashfree'] as const).map((p) => (
-                      <button key={p} onClick={() => setProviderFilter(p)} className={`flex-1 py-1 rounded-full text-xs font-medium transition-colors ${providerFilter === p ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                        {p === 'all' ? 'All' : p.charAt(0).toUpperCase() + p.slice(1)}
-                      </button>
-                    ))}
+                {hasMultipleProviders && (
+                  <div className='mb-4'>
+                    <label className='block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide'>Provider</label>
+                    <div className='flex gap-1.5'>
+                      {(['all', 'stripe', 'cashfree'] as const).map((p) => (
+                        <button key={p} onClick={() => setProviderFilter(p)} className={`flex-1 py-1 rounded-full text-xs font-medium transition-colors ${providerFilter === p ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                          {p === 'all' ? 'All' : p.charAt(0).toUpperCase() + p.slice(1)}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {activeFilterCount > 0 && (
                   <button
@@ -411,6 +442,7 @@ function SubscribersPageInner() {
                 <tr>
                   <th className='px-6 py-3'>Customer</th>
                   <th className='px-6 py-3'>Plan</th>
+                  {hasMultipleProviders && <th className='px-6 py-3'>Provider</th>}
                   <th className='px-6 py-3'>Status</th>
                   <th className='px-6 py-3'>Start Date</th>
                   <th className='px-6 py-3'>Next Billing</th>
@@ -426,8 +458,15 @@ function SubscribersPageInner() {
                     </td>
                     <td className='px-6 py-4'>
                       <div className='font-medium text-gray-800'>{sub.plan_name}</div>
-                      <div className='text-xs text-gray-400 capitalize'>{sub.payment_provider} · {sub.plan_billing_type}</div>
+                      <div className='text-xs text-gray-400 capitalize'>{sub.plan_billing_type}</div>
                     </td>
+                    {hasMultipleProviders && (
+                      <td className='px-6 py-4'>
+                        <span className='inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium capitalize text-gray-700'>
+                          {sub.payment_provider}
+                        </span>
+                      </td>
+                    )}
                     <td className='px-6 py-4'>
                       <span className={`px-2 py-1 text-xs font-medium rounded-full ${STATUS_BADGE[sub.status] ?? 'bg-gray-100 text-gray-800'}`}>
                         {STATUS_LABEL[sub.status] ?? sub.status}

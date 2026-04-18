@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
 import { Plus, Check, Edit2, PauseCircle, ExternalLink, Sparkles, Loader2 } from 'lucide-react'
 import { PaymentService } from '@/services/paymentService'
+import { isGatewayConfigured } from '@/lib/gateway'
 
 // Extended type to include active subscriber count
 interface PlanWithActiveCount {
@@ -254,7 +255,7 @@ export default function PlansPage() {
       if (error) throw error
 
       // Sync to payment gateway if configured
-      const hasGateway = merchant?.stripe_api_key || (merchant as any)?.cashfree_app_id
+      const hasGateway = merchant ? isGatewayConfigured(merchant) : false
       if (hasGateway && newPlan) {
         try {
           const paymentService = new PaymentService()
@@ -276,9 +277,10 @@ export default function PlansPage() {
       resetForm()
       loadPlans()
       alert('✅ Plan created successfully!')
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error saving plan:', error)
-      alert('Failed to save plan: ' + error.message)
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      alert('Failed to save plan: ' + message)
     } finally {
       setLoading(false)
     }
@@ -308,9 +310,10 @@ export default function PlansPage() {
       resetEditForm()
       loadPlans()
       alert('✅ Plan updated successfully!')
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error updating plan:', error)
-      alert('Failed to update plan: ' + error.message)
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      alert('Failed to update plan: ' + message)
     } finally {
       setLoading(false)
     }
@@ -363,7 +366,7 @@ export default function PlansPage() {
     try {
       // Step 1: Notify gateway to archive the plan.
       // manage-plan also sets is_active + archived_at in the DB.
-      const hasGateway = merchant?.stripe_api_key || (merchant as any)?.cashfree_app_id
+      const hasGateway = merchant ? isGatewayConfigured(merchant) : false
       if (hasGateway) {
         try {
           const paymentService = new PaymentService()
@@ -519,7 +522,7 @@ export default function PlansPage() {
   return (
     <div>
       {/* Payment Gateway Warning */}
-      {!merchant?.stripe_api_key && !(merchant as any)?.cashfree_app_id && (
+      {merchant && !isGatewayConfigured(merchant) && (
         <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
           <div className="flex items-start">
             <svg
@@ -536,9 +539,10 @@ export default function PlansPage() {
             <div className="ml-3">
               <h3 className="text-sm font-medium text-yellow-800">Payment gateway not configured</h3>
               <p className="text-sm text-yellow-700 mt-1">
-                To accept payments, please configure Stripe or Cashfree in{' '}
+                Your active payment gateway credentials are incomplete. Subscribers cannot check
+                out until you complete setup in{' '}
                 <a href="/settings" className="underline font-semibold">
-                  Settings
+                  Settings → Payment Setup
                 </a>
                 .
               </p>
@@ -707,7 +711,7 @@ export default function PlansPage() {
                         <Edit2 className="w-4 h-4 mr-2" />
                         Edit Plan
                       </button>
-                      {(merchant?.stripe_api_key || (merchant as any)?.cashfree_app_id) && (
+                      {merchant && isGatewayConfigured(merchant) && (
                         <button
                           onClick={() => copyPaymentLink(plan)}
                           className="w-full bg-green-50 text-green-700 px-4 py-2 rounded-md font-semibold text-sm hover:bg-green-100 flex items-center justify-center transition-colors"

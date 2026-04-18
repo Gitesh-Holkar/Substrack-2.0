@@ -22,6 +22,22 @@ interface PaymentTransaction {
   }
 }
 
+interface PaymentTransactionRow {
+  id: string
+  amount: number
+  status: 'success' | 'failed' | 'pending'
+  payment_date: string
+  stripe_payment_id?: string
+  payment_provider: string | null
+  subscribers?: {
+    customer_name: string | null
+    customer_email: string | null
+  } | null
+  subscription_plans?: {
+    name: string | null
+  } | null
+}
+
 export default function PaymentsPage() {
   const { user } = useAuth()
   const supabase = createClient()
@@ -34,6 +50,7 @@ export default function PaymentsPage() {
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [availablePlans, setAvailablePlans] = useState<string[]>([])
   const [providerFilter, setProviderFilter] = useState<string>('all')
+  const [hasMultipleProviders, setHasMultipleProviders] = useState(false)
   const [dateFrom, setDateFrom] = useState<string>('')
   const [dateTo, setDateTo] = useState<string>('')
 
@@ -45,11 +62,11 @@ export default function PaymentsPage() {
     if (user) {
       loadTransactions()
     }
-  }, [user])
+  }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     filterTransactions()
-  }, [searchQuery, statusFilter, planFilter, providerFilter, dateFrom, dateTo, transactions])
+  }, [searchQuery, statusFilter, planFilter, providerFilter, dateFrom, dateTo, transactions]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadTransactions = async () => {
     try {
@@ -78,21 +95,23 @@ export default function PaymentsPage() {
 
       if (error) throw error
 
-      const formatted = (data || []).map((tx: any) => ({
-        id: tx.id,
-        amount: tx.amount,
-        status: tx.status,
-        payment_date: tx.payment_date,
-        stripe_payment_id: tx.stripe_payment_id,
-        payment_provider: tx.payment_provider ?? 'stripe',
-        subscriber: {
-          customer_name: tx.subscribers?.customer_name || 'Unknown',
-          customer_email: tx.subscribers?.customer_email || '',
-        },
-        plan: {
-          name: tx.subscription_plans?.name || 'Unknown Plan',
-        },
-      }))
+      const formatted = (data || []).map((tx: PaymentTransactionRow) => {
+        return {
+          id: tx.id,
+          amount: tx.amount,
+          status: tx.status,
+          payment_date: tx.payment_date,
+          stripe_payment_id: tx.stripe_payment_id,
+          payment_provider: tx.payment_provider ?? 'stripe',
+          subscriber: {
+            customer_name: tx.subscribers?.customer_name || 'Unknown',
+            customer_email: tx.subscribers?.customer_email || '',
+          },
+          plan: {
+            name: tx.subscription_plans?.name || 'Unknown Plan',
+          },
+        }
+      })
 
       setTransactions(formatted)
       setFilteredTransactions(formatted)
@@ -102,6 +121,9 @@ export default function PaymentsPage() {
         new Set(formatted.map((tx) => tx.plan.name))
       ).sort()
       setAvailablePlans(uniquePlans)
+
+      const uniqueProviders = new Set(formatted.map((tx) => tx.payment_provider))
+      setHasMultipleProviders(uniqueProviders.size > 1)
     } catch (error) {
       console.error('Error loading transactions:', error)
     } finally {
@@ -412,19 +434,20 @@ export default function PaymentsPage() {
                     </div>
                   </div>
 
-                  {/* Provider */}
-                  <div className='mt-3'>
-                    <p className='text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2'>Provider</p>
-                    {(['all', 'stripe', 'cashfree'] as const).map((p) => (
-                      <button
-                        key={p}
-                        onClick={() => setProviderFilter(p)}
-                        className={`block w-full text-left px-3 py-2 rounded text-sm mb-1 ${providerFilter === p ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
-                      >
-                        {p === 'all' ? 'All Providers' : p.charAt(0).toUpperCase() + p.slice(1)}
-                      </button>
-                    ))}
-                  </div>
+                  {hasMultipleProviders && (
+                    <div className='mt-3'>
+                      <p className='text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2'>Provider</p>
+                      {(['all', 'stripe', 'cashfree'] as const).map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => setProviderFilter(p)}
+                          className={`block w-full text-left px-3 py-2 rounded text-sm mb-1 ${providerFilter === p ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
+                        >
+                          {p === 'all' ? 'All Providers' : p.charAt(0).toUpperCase() + p.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Clear All Filters */}
                   {(statusFilter !== 'all' || planFilter !== 'all' || providerFilter !== 'all' || !!dateFrom || !!dateTo) && (
