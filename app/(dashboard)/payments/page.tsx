@@ -95,23 +95,22 @@ export default function PaymentsPage() {
 
       if (error) throw error
 
-      const formatted = (data || []).map((tx: PaymentTransactionRow) => {
-        return {
-          id: tx.id,
-          amount: tx.amount,
-          status: tx.status,
-          payment_date: tx.payment_date,
-          stripe_payment_id: tx.stripe_payment_id,
-          payment_provider: tx.payment_provider ?? 'stripe',
-          subscriber: {
-            customer_name: tx.subscribers?.customer_name || 'Unknown',
-            customer_email: tx.subscribers?.customer_email || '',
-          },
-          plan: {
-            name: tx.subscription_plans?.name || 'Unknown Plan',
-          },
-        }
-      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const formatted = (data || []).map((tx: any) => ({
+        id: tx.id,
+        amount: tx.amount,
+        status: tx.status,
+        payment_date: tx.payment_date,
+        stripe_payment_id: tx.stripe_payment_id,
+        payment_provider: tx.payment_provider ?? 'stripe',
+        subscriber: {
+          customer_name: tx.subscribers?.customer_name || 'Unknown',
+          customer_email: tx.subscribers?.customer_email || '',
+        },
+        plan: {
+          name: tx.subscription_plans?.name || 'Unknown Plan',
+        },
+      }))
 
       setTransactions(formatted)
       setFilteredTransactions(formatted)
