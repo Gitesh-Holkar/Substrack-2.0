@@ -11,6 +11,7 @@ import { requireAuth } from '@/lib/supabase/server-auth'
 import { serviceSupabase } from '@/lib/supabase/service'
 import { GIWI_KNOWLEDGE_BASE } from '@/lib/giwi/knowledgeBase'
 import { geminiPost } from '@/lib/giwi/geminiClient'
+import { giwiDailyLimiter, giwiMinuteLimiter } from '@/lib/ratelimit'
 import type { MerchantContextDocument, MerchantAiProfile, GiwiMemoryEntry } from '@/lib/types'
 
 const FUNCTION_DECLARATIONS = [
@@ -361,6 +362,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'conversationHistory must be an array' }, { status: 400 })
     }
 
+    // Rate limiting — wrapped in try-catch so Upstash downtime never blocks merchants
+    let dailyRemaining = 99
+    let dailyReset = Date.now() + 24 * 60 * 60 * 1000
+
+    try {
+      // Per-minute check (silent — no UI indicator)
+      const minuteResult = await giwiMinuteLimiter.limit(merchantId)
+      if (!minuteResult.success) {
+        return NextResponse.json(
+          { error: 'slow_down' },
+          { status: 429 }
+        )
+      }
+
+      // Daily check (shown in UI)
+      const dailyResult = await giwiDailyLimiter.limit(merchantId)
+      dailyRemaining = dailyResult.remaining
+      dailyReset = dailyResult.reset
+
+      if (!dailyResult.success) {
+        return NextResponse.json(
+          { error: 'daily_limit_reached', remaining: 0, reset: dailyResult.reset },
+          { status: 429 }
+        )
+      }
+    } catch (rateLimitErr) {
+      // Upstash unreachable — fail open, allow request through
+      console.error('[GIWI rate limit] Upstash error — allowing request:', rateLimitErr)
+    }
+
     const { data: aiContext } = await serviceSupabase
       .from('merchant_ai_context')
       .select('context_document')
@@ -551,17 +582,23 @@ BEHAVIOUR RULES:
         responseText = responseText.replaceAll(placeholder, realName)
       })
 
-      return NextResponse.json({
+      const fcResponse = NextResponse.json({
         message: responseText,
         rawMessage: finalResponse.candidates?.[0]?.content?.parts?.[0]?.text ?? responseText,
       })
+      fcResponse.headers.set('X-RateLimit-Remaining', String(dailyRemaining))
+      fcResponse.headers.set('X-RateLimit-Reset', String(dailyReset))
+      return fcResponse
     }
 
     const responseText = firstPart?.text ?? 'I was unable to generate a response. Please try again.'
 
-    return NextResponse.json({
+    const directResponse = NextResponse.json({
       message: responseText,
       rawMessage: responseText,
     })
+    directResponse.headers.set('X-RateLimit-Remaining', String(dailyRemaining))
+    directResponse.headers.set('X-RateLimit-Reset', String(dailyReset))
+    return directResponse
   })
 }

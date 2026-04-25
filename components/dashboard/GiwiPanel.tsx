@@ -12,7 +12,7 @@ import type { JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { X, Send, Sparkles, RefreshCw } from 'lucide-react'
+import { X, Send, Sparkles, RefreshCw, Activity } from 'lucide-react'
 import type { GiwiMessage, GiwiInsights } from '@/lib/types'
 
 const DEBOUNCE_MS = 5 * 60 * 1000 // 5 minutes
@@ -46,6 +46,9 @@ export function GiwiPanel(): JSX.Element | null {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [lastContextRefresh, setLastContextRefresh] = useState<number>(0)
+  const [rateLimitRemaining, setRateLimitRemaining] = useState<number | null>(null)
+  const [rateLimitReset, setRateLimitReset] = useState<number | null>(null)
+  const [showUsage, setShowUsage] = useState(false)
   const [insights, setInsights] = useState<GiwiInsights | null>(null)
   const [profileChecked, setProfileChecked] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -272,10 +275,30 @@ export function GiwiPanel(): JSX.Element | null {
       let responseText: string
       let rawResponseText: string
 
+      // Read rate limit headers before consuming body
+      const remainingHeader = res.headers.get('X-RateLimit-Remaining')
+      const resetHeader = res.headers.get('X-RateLimit-Reset')
+      if (remainingHeader !== null) {
+        setRateLimitRemaining(parseInt(remainingHeader, 10))
+      }
+      if (resetHeader !== null) {
+        setRateLimitReset(parseInt(resetHeader, 10))
+      }
+
       if (res.ok) {
         const data = await res.json() as { message?: string; rawMessage?: string }
         responseText = data.message ?? 'I was unable to generate a response. Please try again.'
         rawResponseText = data.rawMessage ?? responseText
+      } else if (res.status === 429) {
+        const errData = await res.json() as { error?: string; remaining?: number; reset?: number }
+        if (errData.error === 'daily_limit_reached') {
+          if (errData.remaining !== undefined) setRateLimitRemaining(errData.remaining)
+          if (errData.reset !== undefined) setRateLimitReset(errData.reset)
+          responseText = 'You have reached your daily message limit. Check the usage indicator to see when it resets.'
+        } else {
+          responseText = 'Please wait a moment before sending another message.'
+        }
+        rawResponseText = responseText
       } else {
         responseText = "I'm having trouble connecting right now. Please try again in a moment."
         rawResponseText = responseText
@@ -371,10 +394,59 @@ export function GiwiPanel(): JSX.Element | null {
               <p className="text-xs text-gray-400">Viewing: {pageLabel}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={clearConversation}
+        <div className="flex items-center gap-2">
+          {/* Usage button — only shown after first message is sent */}
+          {rateLimitRemaining !== null && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowUsage((prev) => !prev)}
+                title="View daily usage"
+                className={`p-1.5 rounded-md transition-colors ${
+                  rateLimitRemaining === 0
+                    ? 'text-red-500 hover:bg-red-50'
+                    : rateLimitRemaining <= 10
+                      ? 'text-amber-500 hover:bg-amber-50'
+                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <Activity className="w-4 h-4" />
+              </button>
+
+              {showUsage && (
+                <div className="absolute right-0 top-9 w-56 bg-white rounded-xl shadow-xl border border-gray-200 p-4 z-10">
+                  <p className="text-xs font-semibold text-gray-700 mb-2">Daily usage</p>
+                  <div className="flex items-center justify-between text-xs text-gray-500 mb-1.5">
+                    <span>{100 - rateLimitRemaining} used</span>
+                    <span>100 messages</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        rateLimitRemaining === 0
+                          ? 'bg-red-500'
+                          : rateLimitRemaining <= 10
+                            ? 'bg-amber-400'
+                            : 'bg-blue-500'
+                      }`}
+                      style={{ width: `${Math.min(((100 - rateLimitRemaining) / 100) * 100, 100)}%` }}
+                    />
+                  </div>
+                  {rateLimitReset !== null && (
+                    <p className="text-xs text-gray-400 mt-2">
+                      {rateLimitRemaining === 0
+                        ? `Resets in ${Math.ceil((rateLimitReset - Date.now()) / (1000 * 60 * 60))} hours`
+                        : `${rateLimitRemaining} messages remaining`}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={clearConversation}
               title="Clear conversation"
               className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
             >
@@ -458,6 +530,18 @@ export function GiwiPanel(): JSX.Element | null {
         </div>
 
         <div className="px-4 py-1 flex-shrink-0">
+          {rateLimitRemaining !== null && rateLimitRemaining <= 10 && (
+            <div className={`mb-2 flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full w-fit mx-auto ${
+              rateLimitRemaining === 0
+                ? 'bg-red-50 text-red-600'
+                : 'bg-amber-50 text-amber-600'
+            }`}>
+              <Activity className="w-3 h-3" />
+              {rateLimitRemaining === 0
+                ? 'Daily message limit reached'
+                : `${rateLimitRemaining} messages remaining today`}
+            </div>
+          )}
           <p className="text-xs text-gray-400 text-center">
             GIWI provides intelligent guidance based on your data — not guaranteed outcomes.
           </p>
@@ -472,14 +556,14 @@ export function GiwiPanel(): JSX.Element | null {
               onKeyDown={handleKeyDown}
               placeholder="Ask GIWI anything about your business..."
               rows={1}
-              disabled={isLoading}
+              disabled={isLoading || rateLimitRemaining === 0}
               className="flex-1 resize-none rounded-xl border border-gray-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 max-h-24 overflow-y-auto"
               style={{ lineHeight: '1.5' }}
             />
             <button
               type="button"
               onClick={() => void sendMessage(input)}
-              disabled={isLoading || !input.trim()}
+              disabled={isLoading || !input.trim() || rateLimitRemaining === 0}
               aria-label="Send message"
               className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
