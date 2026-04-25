@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { JSX } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
@@ -63,6 +63,9 @@ export default function Settings() {
   const [webhookUrl, setWebhookUrl] = useState('')
 
   const supabase = createClient()
+  // Prevents the merchant useEffect from overwriting user-typed form values
+  // when AuthContext refreshes the merchant object (e.g., on tab visibility change).
+  const hasInitialized = useRef(false)
 
   // ✅ FIX #1: Set webhook URL client-side only
   useEffect(() => {
@@ -92,7 +95,8 @@ export default function Settings() {
   })
 
   useEffect(() => {
-    if (merchant) {
+    if (merchant && !hasInitialized.current) {
+      hasInitialized.current = true
       const merchantPaymentConfig = merchant as typeof merchant & MerchantPaymentConfig
 
       setBusinessInfo({

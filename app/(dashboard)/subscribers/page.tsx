@@ -231,11 +231,11 @@ function SubscribersPageInner() {
   }
 
   const exportToCSV = (): void => {
-    const headers = ['Customer Name', 'Email', 'Plan', 'Status', 'Provider', 'Start Date', 'Next Billing', 'Last Payment']
+    const headers = ['Customer Name', 'Email', 'Plan', 'Status', 'Provider', 'Start Date', 'Next Billing', 'Recurring Amount']
     const rows = filteredSubscribers.map((s) => [
       s.customer_name, s.customer_email, s.plan_name, s.status, s.payment_provider,
       formatDate(s.start_date), formatDate(s.next_renewal_date),
-      s.last_payment_amount != null ? `Rs${s.last_payment_amount.toFixed(2)}` : '-',
+      `Rs${s.plan_price.toFixed(2)}`,
     ])
     const csv = [headers.join(','), ...rows.map((r) => r.map((c) => `"${c}"`).join(','))].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
@@ -446,7 +446,7 @@ function SubscribersPageInner() {
                   <th className='px-6 py-3'>Status</th>
                   <th className='px-6 py-3'>Start Date</th>
                   <th className='px-6 py-3'>Next Billing</th>
-                  <th className='px-6 py-3'>Last Payment</th>
+                  <th className='px-6 py-3'>Recurring Amount</th>
                 </tr>
               </thead>
               <tbody>
@@ -477,7 +477,7 @@ function SubscribersPageInner() {
                     </td>
                     <td className='px-6 py-4'>{formatDate(sub.start_date)}</td>
                     <td className='px-6 py-4'>{formatDate(sub.next_renewal_date)}</td>
-                    <td className='px-6 py-4'>{sub.last_payment_amount != null ? `₹${sub.last_payment_amount.toFixed(2)}` : '-'}</td>
+                    <td className='px-6 py-4'>₹{sub.plan_price.toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>

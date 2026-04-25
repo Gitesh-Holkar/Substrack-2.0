@@ -130,11 +130,14 @@ export function NotificationBell() {
       // Build notifications array
       const allNotifications: Notification[] = []
 
-      // New subscribers
+      // New subscribers and cancellations
+      // isNew: subscriber row was created within the last 7 days.
+      // This correctly covers first-time subscriptions AND re-subscriptions,
+      // because both create a fresh row (new created_at) in the current architecture.
       subscribers?.forEach((sub: any) => {
-        const isNew = new Date(sub.created_at).getTime() > new Date(sub.updated_at).getTime() - 60000 // Within 1 min
+        const isNew = new Date(sub.created_at).getTime() >= sevenDaysAgo.getTime()
         const planName = sub.subscription_plans?.name || 'Unknown Plan'
-        
+
         if (isNew && sub.status === 'active') {
           allNotifications.push({
             id: `new-${sub.id}`,

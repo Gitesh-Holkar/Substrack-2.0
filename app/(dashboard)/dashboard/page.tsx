@@ -108,6 +108,8 @@ export default function DashboardPage() {
   })
   const [aiInsightsLoading, setAiInsightsLoading] = useState(false)
   const [aiInsights, setAiInsights] = useState<import('@/lib/types').GiwiInsights | null>(null)
+  const [insightsRefreshing, setInsightsRefreshing] = useState(false)
+  const [insightsError, setInsightsError] = useState(false)
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([])
   const [revenueChartData, setRevenueChartData] = useState<RevenueChartData[]>([])
   const [subscriberChartData, setSubscriberChartData] = useState<SubscriberChartData[]>([])
@@ -229,10 +231,14 @@ export default function DashboardPage() {
 
         const activeCount = activeSubscribers.length
 
+        const now = new Date()
         const nextWeek = new Date()
         nextWeek.setDate(nextWeek.getDate() + 7)
         const upcomingRenewals = activeSubscribers.filter(
-          (s) => s.next_renewal_date && new Date(s.next_renewal_date) <= nextWeek
+          (s) =>
+            s.next_renewal_date &&
+            new Date(s.next_renewal_date) >= now &&
+            new Date(s.next_renewal_date) <= nextWeek
         ).length
 
         const currentMonthStart = getFirstDayOfMonth(0)
@@ -384,6 +390,31 @@ export default function DashboardPage() {
     } finally {
       setLoading(false)
       setRefreshing(false)
+    }
+  }
+
+  const refreshInsights = async (): Promise<void> => {
+    if (insightsRefreshing) return
+    setInsightsRefreshing(true)
+    setInsightsError(false)
+    try {
+      const res = await fetch('/api/ai/insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      })
+      if (res.ok) {
+        const data = await res.json() as { data?: import('@/lib/types').GiwiInsights }
+        if (data.data) {
+          setAiInsights(data.data)
+        }
+      } else {
+        setInsightsError(true)
+      }
+    } catch {
+      setInsightsError(true)
+    } finally {
+      setInsightsRefreshing(false)
     }
   }
 
@@ -798,20 +829,18 @@ export default function DashboardPage() {
     <div className='flex-1'>
       <div className='flex items-center gap-2'>
         <p className='text-sm font-medium text-gray-500'>Active Subscribers</p>
-        {aiInsights && (
-          <button
-            type="button"
-            onClick={() => openGiwiForMetric(
-              'subscriber growth rate',
-              aiInsights.active_subscribers.explanation,
-              aiInsights.active_subscribers.chips
-            )}
-            title="Ask GIWI about your subscribers"
-            className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
-          >
-            <Sparkles className='w-3 h-3 text-blue-600' />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => openGiwiForMetric(
+            'subscriber growth rate',
+            aiInsights?.active_subscribers.explanation ?? 'Your active subscriber count is the foundation of your MRR. Month-over-month growth here directly drives revenue growth — losing subscribers faster than you acquire them is the earliest warning sign in any subscription business.',
+            aiInsights?.active_subscribers.chips ?? ['What is a healthy subscriber growth rate?', 'How do I acquire more subscribers?', 'What is my subscriber growth trend?']
+          )}
+          title="Ask GIWI about your subscribers"
+          className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+        >
+          <Sparkles className='w-3 h-3 text-blue-600' />
+        </button>
       </div>
       <p className='text-2xl font-bold text-gray-800'>
         {stats.activeSubscribers}
@@ -834,20 +863,18 @@ export default function DashboardPage() {
     <div className='flex-1'>
       <div className='flex items-center gap-2'>
         <p className='text-sm font-medium text-gray-500'>Avg Revenue per User</p>
-        {aiInsights && (
-          <button
-            type="button"
-            onClick={() => openGiwiForMetric(
-              'ARPU',
-              aiInsights.arpu.explanation,
-              aiInsights.arpu.chips
-            )}
-            title="Ask GIWI about your ARPU"
-            className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
-          >
-            <Sparkles className='w-3 h-3 text-blue-600' />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => openGiwiForMetric(
+            'ARPU',
+            aiInsights?.arpu.explanation ?? 'ARPU (Average Revenue Per User) is your total MRR divided by active subscribers. Low ARPU usually means subscribers are concentrated on your cheapest plan. Increasing ARPU — through better plan design or upselling — grows MRR without needing more customers.',
+            aiInsights?.arpu.chips ?? ['What is ARPU?', 'How do I increase my ARPU?', 'What is a healthy ARPU for my business type?']
+          )}
+          title="Ask GIWI about your ARPU"
+          className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+        >
+          <Sparkles className='w-3 h-3 text-blue-600' />
+        </button>
       </div>
       <p className='text-2xl font-bold text-gray-800'>
         ₹{stats.activeSubscribers > 0 ? (stats.monthlyRevenue / stats.activeSubscribers).toFixed(2) : '0.00'}
@@ -867,20 +894,18 @@ export default function DashboardPage() {
     <div className='flex-1'>
       <div className='flex items-center gap-2'>
         <p className='text-sm font-medium text-gray-500'>MRR (Monthly Recurring)</p>
-        {aiInsights && (
-          <button
-            type="button"
-            onClick={() => openGiwiForMetric(
-              'MRR',
-              aiInsights.mrr.explanation,
-              aiInsights.mrr.chips
-            )}
-            title="Ask GIWI about your MRR"
-            className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
-          >
-            <Sparkles className='w-3 h-3 text-blue-600' />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => openGiwiForMetric(
+            'MRR',
+            aiInsights?.mrr.explanation ?? 'Your MRR is the total predictable revenue from all active subscriptions this month. It is the single clearest measure of your subscription business health and stability.',
+            aiInsights?.mrr.chips ?? ['What is MRR?', 'How can I grow my MRR?', 'What is a healthy MRR growth rate for Indian SaaS?']
+          )}
+          title="Ask GIWI about your MRR"
+          className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+        >
+          <Sparkles className='w-3 h-3 text-blue-600' />
+        </button>
       </div>
       <p className='text-2xl font-bold text-gray-800'>
         ₹{stats.mrr.toFixed(2)}
@@ -1005,20 +1030,18 @@ export default function DashboardPage() {
     <div className='flex-1'>
       <div className='flex items-center gap-2'>
         <p className='text-sm font-medium text-gray-500'>Churn Rate</p>
-        {aiInsights && (
-          <button
-            type="button"
-            onClick={() => openGiwiForMetric(
-              'churn rate',
-              aiInsights.churn_rate.explanation,
-              aiInsights.churn_rate.chips
-            )}
-            title="Ask GIWI about your churn rate"
-            className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
-          >
-            <Sparkles className='w-3 h-3 text-blue-600' />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => openGiwiForMetric(
+            'churn rate',
+            aiInsights?.churn_rate.explanation ?? 'Churn rate is the percentage of subscribers who cancelled this month. For Indian SaaS at early stage, under 10% monthly churn is acceptable — under 5% is healthy. Even a small reduction in churn has a compounding positive effect on MRR over time.',
+            aiInsights?.churn_rate.chips ?? ['What is churn rate?', 'What causes subscribers to cancel?', 'How do I reduce my churn rate?']
+          )}
+          title="Ask GIWI about your churn rate"
+          className='flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 hover:bg-blue-100 transition-colors'
+        >
+          <Sparkles className='w-3 h-3 text-blue-600' />
+        </button>
       </div>
       <p className='text-2xl font-bold text-gray-800'>
         {stats.churnRate.toFixed(1)}%
@@ -1041,11 +1064,32 @@ export default function DashboardPage() {
           <Sparkles className='w-4 h-4 text-white' />
         </div>
         <h3 className='font-semibold text-gray-800 text-sm'>GIWI Business Snapshot</h3>
-        <span className='ml-auto text-xs text-gray-400'>
-          {aiInsights?.computed_at
-            ? `Updated ${new Date(aiInsights.computed_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
-            : ''}
-        </span>
+        <div className='ml-auto flex items-center gap-2'>
+          {insightsError && (
+            <span className='text-xs text-orange-500'>Could not refresh</span>
+          )}
+          {aiInsights?.computed_at && !insightsError && (
+            <span className='text-xs text-gray-400'>
+              {(() => {
+                const mins = Math.floor((Date.now() - new Date(aiInsights.computed_at).getTime()) / 60000)
+                if (mins < 1) return 'Updated just now'
+                if (mins < 60) return `Updated ${mins}m ago`
+                const hrs = Math.floor(mins / 60)
+                if (hrs < 24) return `Updated ${hrs}h ago`
+                return `Updated ${Math.floor(hrs / 24)}d ago`
+              })()}
+            </span>
+          )}
+          <button
+            type='button'
+            onClick={refreshInsights}
+            disabled={insightsRefreshing}
+            title='Refresh GIWI insights'
+            className='flex items-center justify-center w-6 h-6 rounded-full hover:bg-gray-100 transition-colors disabled:opacity-40'
+          >
+            <RefreshCw className={`w-3 h-3 text-gray-400 ${insightsRefreshing ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
       <div className='px-6 py-4'>
         {aiInsightsLoading && !aiInsights ? (

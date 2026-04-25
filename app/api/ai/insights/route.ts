@@ -6,7 +6,7 @@ export const runtime = 'nodejs'
 // Called once per dashboard load. Caches result in merchant_ai_context.
 // Returns GiwiInsights JSON.
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/supabase/server-auth'
 import { serviceSupabase } from '@/lib/supabase/service'
 import { GIWI_KNOWLEDGE_BASE } from '@/lib/giwi/knowledgeBase'
@@ -57,7 +57,15 @@ async function callGemini(prompt: string): Promise<string> {
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
 }
 
-export async function POST(): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  let force = false
+  try {
+    const body = await request.json() as { force?: boolean }
+    force = body?.force === true
+  } catch {
+    // No body or invalid JSON — default to non-forced (cache respected)
+  }
+
   return requireAuth(async ({ merchantId }) => {
     const { data: aiContext } = await serviceSupabase
       .from('merchant_ai_context')
@@ -72,14 +80,16 @@ export async function POST(): Promise<NextResponse> {
 
     const ctx = contextRow.context_document as MerchantContextDocument
 
-    if (
-      contextRow.dashboard_insights_computed_at &&
-      contextRow.last_computed_at &&
-      new Date(contextRow.dashboard_insights_computed_at) >= new Date(contextRow.last_computed_at) &&
-      contextRow.dashboard_insights &&
+    const hasValidInsights =
+      contextRow.dashboard_insights != null &&
       Object.keys(contextRow.dashboard_insights).length > 0
-    ) {
-      return NextResponse.json({ data: contextRow.dashboard_insights })
+
+    if (!force && hasValidInsights && contextRow.dashboard_insights_computed_at) {
+      const ageMs = Date.now() - new Date(contextRow.dashboard_insights_computed_at).getTime()
+      const twentyFourHours = 24 * 60 * 60 * 1000
+      if (ageMs < twentyFourHours) {
+        return NextResponse.json({ data: contextRow.dashboard_insights })
+      }
     }
 
     const { data: profile } = await serviceSupabase

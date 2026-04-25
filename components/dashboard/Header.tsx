@@ -82,16 +82,6 @@ export function Header() {
           {dropdownOpen && (
             <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-xl z-20">
               <button
-                onClick={() => {
-                  router.push('/dashboard/settings')
-                  setDropdownOpen(false)
-                }}
-                className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-              >
-                Settings
-              </button>
-              <div className="border-t border-gray-100"></div>
-              <button
                 onClick={handleSignOut}
                 className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-red-50 hover:text-red-600"
               >
