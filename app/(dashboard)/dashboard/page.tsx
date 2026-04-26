@@ -110,6 +110,7 @@ export default function DashboardPage() {
   const [aiInsights, setAiInsights] = useState<import('@/lib/types').GiwiInsights | null>(null)
   const [insightsRefreshing, setInsightsRefreshing] = useState(false)
   const [insightsError, setInsightsError] = useState(false)
+  const [preferredLanguage, setPreferredLanguage] = useState<'english' | 'hinglish'>('english')
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([])
   const [revenueChartData, setRevenueChartData] = useState<RevenueChartData[]>([])
   const [subscriberChartData, setSubscriberChartData] = useState<SubscriberChartData[]>([])
@@ -139,6 +140,14 @@ export default function DashboardPage() {
       if (res.ok) {
         const data = await res.json() as { data?: import('@/lib/types').GiwiInsights }
         if (data.data) setAiInsights(data.data)
+      }
+      const { data: profileData } = await supabase
+        .from('merchant_ai_profile')
+        .select('preferred_language')
+        .eq('merchant_id', user!.id)
+        .maybeSingle()
+      if (profileData?.preferred_language === 'hinglish' || profileData?.preferred_language === 'english') {
+        setPreferredLanguage(profileData.preferred_language)
       }
     } catch {
       // AI insights are non-critical — do not surface errors to user
@@ -687,6 +696,8 @@ export default function DashboardPage() {
     )
   }
 
+  const isHinglish = preferredLanguage === 'hinglish'
+
   return (
     
     <div>
@@ -765,7 +776,9 @@ export default function DashboardPage() {
           type="button"
           onClick={() => openGiwiForMetric(
             'monthly revenue',
-            `Your monthly revenue is ₹${stats.monthlyRevenue.toFixed(2)} this month, ${stats.monthlyRevenueGrowth > 0 ? 'up' : stats.monthlyRevenueGrowth < 0 ? 'down' : 'flat'} ${Math.abs(stats.monthlyRevenueGrowth).toFixed(1)}% from last month. This includes all successful payments collected in the current calendar month — it differs from MRR which is calculated from active plan prices.`,
+            isHinglish
+              ? `Aapka is mahine ka monthly revenue ₹${stats.monthlyRevenue.toFixed(2)} hai, pichle mahine ke mukable ${Math.abs(stats.monthlyRevenueGrowth).toFixed(1)}% ${stats.monthlyRevenueGrowth > 0 ? 'zyada' : stats.monthlyRevenueGrowth < 0 ? 'kam' : 'same'}. Isme is calendar month ke saare successful payments shamil hain — yeh MRR se alag hai jo active plan prices se calculate hota hai.`
+              : `Your monthly revenue is ₹${stats.monthlyRevenue.toFixed(2)} this month, ${stats.monthlyRevenueGrowth > 0 ? 'up' : stats.monthlyRevenueGrowth < 0 ? 'down' : 'flat'} ${Math.abs(stats.monthlyRevenueGrowth).toFixed(1)}% from last month. This includes all successful payments collected in the current calendar month — it differs from MRR which is calculated from active plan prices.`,
             ['How does this differ from MRR?', 'Why did my revenue change this month?', 'How can I grow my monthly revenue?']
           )}
           title="Ask GIWI about your monthly revenue"
@@ -799,7 +812,9 @@ export default function DashboardPage() {
           type="button"
           onClick={() => openGiwiForMetric(
             'total revenue',
-            `Your total all-time revenue collected through Substrack is ₹${stats.totalRevenue.toFixed(2)}. This is the cumulative sum of every successful payment — useful for understanding the overall scale of your subscription business since you started.`,
+            isHinglish
+              ? `Substrack ke zariye aapka total all-time revenue ₹${stats.totalRevenue.toFixed(2)} hai. Yeh har successful payment ka cumulative sum hai — aapne jab se shuru kiya tab se aapki subscription business ki overall scale samajhne ke liye useful hai.`
+              : `Your total all-time revenue collected through Substrack is ₹${stats.totalRevenue.toFixed(2)}. This is the cumulative sum of every successful payment — useful for understanding the overall scale of your subscription business since you started.`,
             ['How is total revenue different from MRR?', 'What does total revenue tell me?', 'How can I track revenue growth over time?']
           )}
           title="Ask GIWI about your total revenue"
@@ -833,7 +848,9 @@ export default function DashboardPage() {
           type="button"
           onClick={() => openGiwiForMetric(
             'subscriber growth rate',
-            aiInsights?.active_subscribers.explanation ?? 'Your active subscriber count is the foundation of your MRR. Month-over-month growth here directly drives revenue growth — losing subscribers faster than you acquire them is the earliest warning sign in any subscription business.',
+            aiInsights?.active_subscribers.explanation ?? (isHinglish
+              ? 'Aapke active subscribers ki sankhya aapke MRR ki neenv hai. Yahan month-over-month growth seedha revenue growth drive karta hai — subscribers ko acquire karne se zyada tezi se kho dena kisi bhi subscription business mein sabse pehla warning sign hai.'
+              : 'Your active subscriber count is the foundation of your MRR. Month-over-month growth here directly drives revenue growth — losing subscribers faster than you acquire them is the earliest warning sign in any subscription business.'),
             aiInsights?.active_subscribers.chips ?? ['What is a healthy subscriber growth rate?', 'How do I acquire more subscribers?', 'What is my subscriber growth trend?']
           )}
           title="Ask GIWI about your subscribers"
@@ -867,7 +884,9 @@ export default function DashboardPage() {
           type="button"
           onClick={() => openGiwiForMetric(
             'ARPU',
-            aiInsights?.arpu.explanation ?? 'ARPU (Average Revenue Per User) is your total MRR divided by active subscribers. Low ARPU usually means subscribers are concentrated on your cheapest plan. Increasing ARPU — through better plan design or upselling — grows MRR without needing more customers.',
+            aiInsights?.arpu.explanation ?? (isHinglish
+              ? 'ARPU (Average Revenue Per User) aapka total MRR divided by active subscribers hai. Low ARPU aksar matlab hai ki subscribers aapke sabse saste plan par concentrated hain. ARPU badhana — better plan design ya upselling ke zariye — zyada customers ke bina MRR grow karta hai.'
+              : 'ARPU (Average Revenue Per User) is your total MRR divided by active subscribers. Low ARPU usually means subscribers are concentrated on your cheapest plan. Increasing ARPU — through better plan design or upselling — grows MRR without needing more customers.'),
             aiInsights?.arpu.chips ?? ['What is ARPU?', 'How do I increase my ARPU?', 'What is a healthy ARPU for my business type?']
           )}
           title="Ask GIWI about your ARPU"
@@ -898,7 +917,9 @@ export default function DashboardPage() {
           type="button"
           onClick={() => openGiwiForMetric(
             'MRR',
-            aiInsights?.mrr.explanation ?? 'Your MRR is the total predictable revenue from all active subscriptions this month. It is the single clearest measure of your subscription business health and stability.',
+            aiInsights?.mrr.explanation ?? (isHinglish
+              ? 'Aapka MRR (Monthly Recurring Revenue) is mahine ke sabhi active subscriptions se milne wala total predictable revenue hai. Yeh aapki subscription business health aur stability ka sabse clear measure hai.'
+              : 'Your MRR is the total predictable revenue from all active subscriptions this month. It is the single clearest measure of your subscription business health and stability.'),
             aiInsights?.mrr.chips ?? ['What is MRR?', 'How can I grow my MRR?', 'What is a healthy MRR growth rate for Indian SaaS?']
           )}
           title="Ask GIWI about your MRR"
@@ -940,7 +961,9 @@ export default function DashboardPage() {
               e.stopPropagation()
               openGiwiForMetric(
                 'Revenue at Risk',
-                `₹${stats.revenueAtRisk.toFixed(2)} is at risk across ${stats.pastDueCount} subscriber${stats.pastDueCount !== 1 ? 's' : ''} whose payments have failed. These are in active dunning recovery — Day 1, Day 3, and Day 7 reminder emails are being sent automatically. If payment is not collected by Day 7, the subscription is cancelled.`,
+                isHinglish
+                  ? `₹${stats.revenueAtRisk.toFixed(2)} at risk hai ${stats.pastDueCount} subscriber${stats.pastDueCount !== 1 ? 's' : ''} ke failed payments ki wajah se. Yeh active dunning recovery mein hain — Day 1, Day 3, aur Day 7 reminder emails automatically bheje ja rahe hain. Agar Day 7 tak payment collect nahi hui toh subscription cancel ho jayega.`
+                  : `₹${stats.revenueAtRisk.toFixed(2)} is at risk across ${stats.pastDueCount} subscriber${stats.pastDueCount !== 1 ? 's' : ''} whose payments have failed. These are in active dunning recovery — Day 1, Day 3, and Day 7 reminder emails are being sent automatically. If payment is not collected by Day 7, the subscription is cancelled.`,
                 ['What is dunning and how does it work?', 'How do I recover failed payments faster?', 'What happens if dunning fails completely?']
               )
             }}
@@ -971,7 +994,9 @@ export default function DashboardPage() {
             type="button"
             onClick={() => openGiwiForMetric(
               'ARR',
-              `Your ARR is ₹${stats.arr.toFixed(2)} — this is your current MRR annualised (MRR × 12). It gives you a scale view of your subscription business for planning and benchmarking, but it assumes your subscriber base stays constant for 12 months.`,
+              isHinglish
+                ? `Aapka ARR ₹${stats.arr.toFixed(2)} hai — yeh aapka current MRR annualised hai (MRR × 12). Yeh aapki subscription business ki planning aur benchmarking ke liye scale view deta hai, lekin yeh assume karta hai ki aapka subscriber base 12 mahine tak constant rahega.`
+                : `Your ARR is ₹${stats.arr.toFixed(2)} — this is your current MRR annualised (MRR × 12). It gives you a scale view of your subscription business for planning and benchmarking, but it assumes your subscriber base stays constant for 12 months.`,
               ['What is ARR and how is it calculated?', 'How does my ARR compare to Indian SaaS benchmarks?', 'What should I focus on to grow my ARR?']
             )}
             title="Ask GIWI about your ARR"
@@ -1006,7 +1031,9 @@ export default function DashboardPage() {
           type="button"
           onClick={() => openGiwiForMetric(
             'upcoming renewals',
-            `You have ${stats.upcomingRenewals} subscription${stats.upcomingRenewals !== 1 ? 's' : ''} renewing in the next 7 days. Each renewal is a revenue retention moment — a successful renewal keeps your MRR stable, while a failed renewal creates involuntary churn risk.`,
+            isHinglish
+              ? `Aapke paas ${stats.upcomingRenewals} subscription${stats.upcomingRenewals !== 1 ? 's' : ''} hain jo agle 7 dino mein renew honge. Har renewal ek revenue retention moment hai — successful renewal aapka MRR stable rakhta hai, jabki failed renewal involuntary churn ka risk create karta hai.`
+              : `You have ${stats.upcomingRenewals} subscription${stats.upcomingRenewals !== 1 ? 's' : ''} renewing in the next 7 days. Each renewal is a revenue retention moment — a successful renewal keeps your MRR stable, while a failed renewal creates involuntary churn risk.`,
             ['Which subscribers are renewing soon?', 'What happens if a renewal payment fails?', 'How do I reduce renewal payment failures?']
           )}
           title="Ask GIWI about upcoming renewals"
@@ -1034,7 +1061,9 @@ export default function DashboardPage() {
           type="button"
           onClick={() => openGiwiForMetric(
             'churn rate',
-            aiInsights?.churn_rate.explanation ?? 'Churn rate is the percentage of subscribers who cancelled this month. For Indian SaaS at early stage, under 10% monthly churn is acceptable — under 5% is healthy. Even a small reduction in churn has a compounding positive effect on MRR over time.',
+            aiInsights?.churn_rate.explanation ?? (isHinglish
+              ? 'Churn rate woh percentage hai jinne is mahine subscription cancel ki. Indian SaaS ke liye early stage mein 10% se kam monthly churn acceptable hai — 5% se kam healthy hai. Churn mein chhoti si bhi kami MRR par samay ke saath compound positive effect dalti hai.'
+              : 'Churn rate is the percentage of subscribers who cancelled this month. For Indian SaaS at early stage, under 10% monthly churn is acceptable — under 5% is healthy. Even a small reduction in churn has a compounding positive effect on MRR over time.'),
             aiInsights?.churn_rate.chips ?? ['What is churn rate?', 'What causes subscribers to cancel?', 'How do I reduce my churn rate?']
           )}
           title="Ask GIWI about your churn rate"
