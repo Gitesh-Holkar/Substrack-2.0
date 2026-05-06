@@ -69,13 +69,13 @@ export function Header() {
                 />
               ) : (
                 <span className="text-gray-600 font-semibold">
-                  {merchant && getInitials(merchant.full_name)}
+                  {merchant && getInitials(merchant.business_name)}
                 </span>
               )}
             </div>
             <div className="hidden md:block text-right">
-              <div className="font-semibold text-sm text-gray-700">{merchant?.full_name}</div>
-              <div className="text-xs text-gray-500">{merchant?.business_name}</div>
+              <div className="font-semibold text-sm text-gray-700">{merchant?.business_name}</div>
+              <div className="text-xs text-gray-500">{merchant?.full_name}</div>
             </div>
           </button>
           

@@ -1114,9 +1114,9 @@ export default function DashboardPage() {
             onClick={refreshInsights}
             disabled={insightsRefreshing}
             title='Refresh GIWI insights'
-            className='flex items-center justify-center w-6 h-6 rounded-full hover:bg-gray-100 transition-colors disabled:opacity-40'
+            className='flex items-center justify-center w-6 h-6 rounded-full ring-1 ring-inset ring-indigo-200 bg-indigo-50 hover:bg-indigo-100 transition-colors disabled:opacity-40'
           >
-            <RefreshCw className={`w-3 h-3 text-gray-400 ${insightsRefreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3 h-3 text-indigo-500 ${insightsRefreshing ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>

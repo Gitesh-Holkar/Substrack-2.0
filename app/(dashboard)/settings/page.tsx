@@ -626,7 +626,7 @@ export default function Settings() {
                         ? isGatewayCredentialsSaved(merchant, provider)
                         : false
                       const label =
-                        provider === 'stripe' ? 'Stripe (International)' : 'Cashfree (India)'
+                        provider === 'stripe' ? 'Stripe' : 'Cashfree'
 
                       return (
                         <button

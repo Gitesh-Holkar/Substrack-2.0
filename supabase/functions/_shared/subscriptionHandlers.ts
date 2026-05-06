@@ -237,6 +237,35 @@ async function onPaymentSucceeded(
     return
   }
 
+  // Cashfree does not reliably include next_schedule_date in SUBSCRIPTION_PAYMENT_SUCCESS.
+  // When absent, compute the next renewal from the plan's billing cycle so that
+  // next_renewal_date is never left null for an active Cashfree subscriber.
+  // Stripe subscribers are unaffected - next_renewal_date for Stripe is managed
+  // exclusively by the customer.subscription.updated -> onSubscriptionUpdated path.
+  let computedNextRenewalDate: Date | null = event.nextRenewalDate ?? null
+  if (!computedNextRenewalDate && event.provider === 'cashfree') {
+    const { data: planForDate } = await supabase
+      .from('subscription_plans')
+      .select('billing_cycle')
+      .eq('id', subscriber.plan_id)
+      .single()
+    if (planForDate) {
+      const cycleDays: Record<string, number> = {
+        daily: 1,
+        weekly: 7,
+        monthly: 30,
+        quarterly: 90,
+        yearly: 365,
+      }
+      const days = cycleDays[planForDate.billing_cycle] ?? 30
+      computedNextRenewalDate = new Date(Date.now() + days * 24 * 60 * 60 * 1000)
+      console.log(
+        'Cashfree: computed next_renewal_date from billing cycle for:',
+        event.providerSubscriptionId
+      )
+    }
+  }
+
   const updates: Record<string, unknown> = {
     status: 'active',
     last_payment_date: new Date().toISOString(),
@@ -245,8 +274,8 @@ async function onPaymentSucceeded(
     dunning_started_at: null,
     next_retry_at: null,
   }
-  if (event.nextRenewalDate) {
-    updates.next_renewal_date = event.nextRenewalDate.toISOString()
+  if (computedNextRenewalDate) {
+    updates.next_renewal_date = computedNextRenewalDate.toISOString()
   }
 
   await supabase.from('subscribers').update(updates).eq('id', subscriber.id)
