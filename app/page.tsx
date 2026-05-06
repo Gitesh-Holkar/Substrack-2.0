@@ -71,7 +71,7 @@ const BEFORE_AFTER = [
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function LandingPage(): JSX.Element {
+export default function LandingPage() {
   const router = useRouter()
   const { user } = useAuth()
 
