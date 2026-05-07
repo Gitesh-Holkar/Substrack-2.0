@@ -587,7 +587,6 @@ export default function Settings() {
                         Optional - for Indian businesses
                       </p>
                     </div>
-                  </div>
 
                   <div>
                     <label className='block text-sm font-medium text-gray-700 mb-1'>
@@ -610,6 +609,7 @@ export default function Settings() {
                       placeholder='https://yourwebsite.com/thank-you'
                     />
                   </div>
+                   </div>
                 </div>
 
                 <div className='flex justify-end'>
