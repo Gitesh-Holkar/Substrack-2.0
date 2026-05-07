@@ -26,24 +26,22 @@ interface SubscriberRow {
   status: string
   created_at: string
   updated_at: string
-  subscription_plans?: PlanJoin | null
+  subscription_plans: PlanJoin[]
 }
 
 interface FailedPaymentRow {
   id: string
   payment_date: string
   amount: number
-  subscribers?: {
-    customer_name?: string | null
-  } | null
-  subscription_plans?: PlanJoin | null
+  subscribers: { customer_name?: string | null }[]
+  subscription_plans: PlanJoin[]
 }
 
 interface UpcomingRenewalRow {
   id: string
   customer_name: string
   next_renewal_date: string
-  subscription_plans?: PlanJoin | null
+  subscription_plans: PlanJoin[]
 }
 
 // Per-merchant notification state persisted in localStorage.
@@ -209,8 +207,7 @@ export function NotificationBell() {
 
       subscribers?.forEach((sub: SubscriberRow) => {
         const isNew = new Date(sub.created_at).getTime() >= sevenDaysAgo.getTime()
-        const planName = sub.subscription_plans?.name || 'Unknown Plan'
-
+const planName = sub.subscription_plans[0]?.name || 'Unknown Plan'
         if (isNew && sub.status === 'active') {
           allNotifications.push({
             id: `new-${sub.id}`,
@@ -235,8 +232,8 @@ export function NotificationBell() {
       })
 
       failedPayments?.forEach((payment: FailedPaymentRow) => {
-        const customerName = payment.subscribers?.customer_name || 'Unknown Customer'
-        const planName = payment.subscription_plans?.name || 'Unknown Plan'
+const customerName = payment.subscribers[0]?.customer_name || 'Unknown Customer'
+        const planName = payment.subscription_plans[0]?.name || 'Unknown Plan'
         allNotifications.push({
           id: `failed-${payment.id}`,
           type: 'failed_payment',
@@ -250,7 +247,7 @@ export function NotificationBell() {
       })
 
       upcomingRenewals?.forEach((renewal: UpcomingRenewalRow) => {
-        const planName = renewal.subscription_plans?.name || 'Unknown Plan'
+const planName = renewal.subscription_plans[0]?.name || 'Unknown Plan'
         const daysUntil = Math.ceil(
           (new Date(renewal.next_renewal_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
         )
