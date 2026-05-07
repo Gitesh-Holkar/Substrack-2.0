@@ -10,7 +10,7 @@ function SubscriptionSuccessContent() {
   const merchantName = searchParams.get('merchant');
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center">
         {/* Success Icon */}
         <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">

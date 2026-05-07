@@ -116,18 +116,8 @@ export function IntegrationsTab() {
 }
 
 function SdkPanel() {
-  const { user, merchant, refreshMerchant } = useAuth()
-  const supabase = createClient()
-  const [redirectUrl, setRedirectUrl] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [successMessage, setSuccessMessage] = useState('')
+  const { user } = useAuth()
   const [sdkCodeCopied, setSdkCodeCopied] = useState(false)
-
-  useEffect(() => {
-    if (merchant) {
-      setRedirectUrl((merchant as { redirect_url?: string }).redirect_url || '')
-    }
-  }, [merchant])
 
   const sdkUrl = 'https://substrack-yags.vercel.app/substrack-sdk.js'
 
@@ -167,29 +157,6 @@ function SdkPanel() {
       setTimeout(() => setSdkCodeCopied(false), 2000)
     })
   }, [sdkCode])
-
-  const handleRedirectUrlSave = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault()
-    setLoading(true)
-    setSuccessMessage('')
-
-    try {
-      const { error } = await supabase
-        .from('merchants')
-        .update({ redirect_url: redirectUrl })
-        .eq('id', user!.id)
-
-      if (error) throw error
-
-      await refreshMerchant()
-      setSuccessMessage('Redirect URL saved successfully!')
-      setTimeout(() => setSuccessMessage(''), 3000)
-    } catch {
-      alert('Failed to save redirect URL')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -242,36 +209,6 @@ function SdkPanel() {
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="rounded-lg border border-gray-200 bg-white p-5">
-        <form onSubmit={(e) => void handleRedirectUrlSave(e)} className="space-y-3">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Redirect URL <span className="font-normal text-gray-400">(optional)</span>
-            </label>
-            <p className="mb-2 text-xs text-gray-500">
-              Where customers land after completing payment. Leave empty to use the default
-              success page.
-            </p>
-            <input
-              type="url"
-              value={redirectUrl}
-              onChange={(e) => setRedirectUrl(e.target.value)}
-              placeholder="https://yourwebsite.com/dashboard"
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          {successMessage && <p className="text-xs font-medium text-green-600">{successMessage}</p>}
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
-          >
-            {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            Save Redirect URL
-          </button>
-        </form>
       </div>
 
       <div className="rounded-lg border border-gray-200 bg-white p-5">

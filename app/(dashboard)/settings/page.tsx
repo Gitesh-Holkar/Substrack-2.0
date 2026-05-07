@@ -86,6 +86,7 @@ export default function Settings() {
     business_address: '',
     gst_number: '',
     logo_url: '',
+    redirect_url: '',
   })
 
   const [stripeInfo, setStripeInfo] = useState({
@@ -107,6 +108,7 @@ export default function Settings() {
         business_address: (merchant as { business_address?: string }).business_address || '',
         gst_number: merchant.gst_number || '',
         logo_url: merchant.logo_url || '',
+        redirect_url: (merchant as { redirect_url?: string }).redirect_url || '',
       })
       setStripeInfo({
         stripe_secret_key: merchant.stripe_api_key || '',
@@ -190,6 +192,7 @@ export default function Settings() {
           business_address: businessInfo.business_address,
           gst_number: businessInfo.gst_number,
           logo_url: logoUrl,
+          redirect_url: businessInfo.redirect_url.trim() || null,
         })
         .eq('id', user!.id)
 
@@ -584,6 +587,28 @@ export default function Settings() {
                         Optional - for Indian businesses
                       </p>
                     </div>
+                  </div>
+
+                  <div>
+                    <label className='block text-sm font-medium text-gray-700 mb-1'>
+                      Post-Payment Redirect URL
+                      <span className='ml-1 font-normal text-gray-400'>(Optional)</span>
+                    </label>
+                    <p className='text-xs text-gray-500 mb-2'>
+                      Where your customers land after a successful subscription. Leave empty to use Substrack&apos;s default success page.
+                    </p>
+                    <input
+                      type='url'
+                      value={businessInfo.redirect_url}
+                      onChange={(e) =>
+                        setBusinessInfo({
+                          ...businessInfo,
+                          redirect_url: e.target.value,
+                        })
+                      }
+                      className='w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500'
+                      placeholder='https://yourwebsite.com/thank-you'
+                    />
                   </div>
                 </div>
 
