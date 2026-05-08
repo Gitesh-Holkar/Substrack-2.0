@@ -18,7 +18,7 @@
 //   GEMINI_FALLBACK_MODEL_2   - second fallback (optional)
 //   GEMINI_API_KEY            - API key (required)
 
-const RETRY_DELAY_MS = 2000
+const RETRY_DELAY_MS = 500 // reduce from 2000 to 500ms based on observed retry success rates and desire for faster failover
 const DEFAULT_TIMEOUT_MS = 15000
 
 function buildGeminiUrl(model: string): string {
