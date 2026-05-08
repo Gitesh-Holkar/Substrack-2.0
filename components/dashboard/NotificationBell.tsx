@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext'
 
 interface Notification {
   id: string
-  type: 'new_subscriber' | 'cancellation' | 'failed_payment' | 'upcoming_renewal'
+  type: 'new_subscriber' | 'cancellation' | 'failed_payment'
   message: string
   timestamp: string
   read: boolean
@@ -16,8 +16,9 @@ interface Notification {
   amount?: number
 }
 
+// PostgREST returns to-one FK joins as a single object, not an array.
 interface PlanJoin {
-  name?: string | null
+  name: string | null
 }
 
 interface SubscriberRow {
@@ -26,29 +27,22 @@ interface SubscriberRow {
   status: string
   created_at: string
   updated_at: string
-  subscription_plans: PlanJoin[]
+  subscription_plans: PlanJoin | null
 }
 
 interface FailedPaymentRow {
   id: string
   payment_date: string
   amount: number
-  subscribers: { customer_name?: string | null }[]
-  subscription_plans: PlanJoin[]
-}
-
-interface UpcomingRenewalRow {
-  id: string
-  customer_name: string
-  next_renewal_date: string
-  subscription_plans: PlanJoin[]
+  subscribers: { customer_name: string | null } | null
+  subscription_plans: PlanJoin | null
 }
 
 // Per-merchant notification state persisted in localStorage.
-// dismissedIds   - IDs permanently hidden by the user.
-// lastReadAt     - ISO timestamp; notifications newer than this are "unread" (badge shown).
-//                  Updated to now() each time the bell is opened.
-// clearedAt      - ISO timestamp; notifications older than this are hidden (set by "Clear all").
+// dismissedIds - IDs permanently hidden by the user.
+// lastReadAt   - ISO timestamp; notifications newer than this show the unread badge.
+//               Updated to now() each time the bell is opened.
+// clearedAt    - ISO timestamp; notifications older than this are hidden ("Clear all").
 interface NotifPersistedState {
   dismissedIds: string[]
   lastReadAt: string
@@ -64,7 +58,7 @@ function loadPersistedState(userId: string): NotifPersistedState {
     const raw = localStorage.getItem(storageKey(userId))
     if (raw) return JSON.parse(raw) as NotifPersistedState
   } catch {
-    // localStorage unavailable (private browsing, quota exceeded) - degrade gracefully
+    // localStorage unavailable — degrade gracefully
   }
   return { dismissedIds: [], lastReadAt: new Date(0).toISOString(), clearedAt: null }
 }
@@ -73,7 +67,7 @@ function savePersistedState(userId: string, state: NotifPersistedState): void {
   try {
     localStorage.setItem(storageKey(userId), JSON.stringify(state))
   } catch {
-    // Fail silently - notifications still work in-session, just won't persist
+    // Fail silently
   }
 }
 
@@ -101,35 +95,83 @@ export function NotificationBell() {
     setPersisted(stored)
   }, [user])
 
-  // Load notifications and subscribe to realtime updates.
-  // Intentionally does NOT list persisted/dismissedIds as a dependency -
-  // loadNotifications reads localStorage directly so realtime callbacks
-  // always use the latest dismissed/cleared values without stale closures.
+  // Initial load.
   useEffect(() => {
     if (!user) return
     void loadNotifications()
+  }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Realtime: new subscriber inserted → refresh.
+  useEffect(() => {
+    if (!user) return
     const channel = supabase
-      .channel('notifications')
+      .channel('notif_subscribers')
       .on(
         'postgres_changes',
         {
-          event: '*',
+          event: 'INSERT',
           schema: 'public',
           table: 'subscribers',
           filter: `merchant_id=eq.${user.id}`,
         },
-        () => {
-          void loadNotifications()
+        () => { void loadNotifications() }
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Realtime: subscriber status updated (cancellation) → refresh.
+  useEffect(() => {
+    if (!user) return
+    const channel = supabase
+      .channel('notif_subscriber_updates')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'subscribers',
+          filter: `merchant_id=eq.${user.id}`,
+        },
+        (payload) => {
+          // Only re-fetch if the status actually changed to cancelled.
+          // This prevents dunning/payment updates from triggering unnecessary fetches.
+          const newRow = payload.new as { status?: string }
+          const oldRow = payload.old as { status?: string }
+          if (newRow.status === 'cancelled' && oldRow.status !== 'cancelled') {
+            void loadNotifications()
+          }
         }
       )
       .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
+    return () => { supabase.removeChannel(channel) }
   }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Realtime: failed payment inserted → refresh.
+  useEffect(() => {
+    if (!user) return
+    const channel = supabase
+      .channel('notif_payments')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'payment_transactions',
+          filter: `merchant_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const newRow = payload.new as { status?: string }
+          if (newRow.status === 'failed') {
+            void loadNotifications()
+          }
+        }
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Close dropdown when clicking outside.
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -140,8 +182,7 @@ export function NotificationBell() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Reads localStorage directly (not React state) so this function is safe to call
-  // from realtime callbacks where the persisted closure would be stale.
+  // Reads localStorage directly so realtime callbacks always have fresh dismissed state.
   const loadNotifications = async (): Promise<void> => {
     if (!user) return
     try {
@@ -149,6 +190,7 @@ export function NotificationBell() {
       const sevenDaysAgo = new Date()
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
 
+      // ── New subscribers & cancellations ──────────────────────────────────
       const { data: subscribers, error: subError } = await supabase
         .from('subscribers')
         .select(`
@@ -166,13 +208,14 @@ export function NotificationBell() {
 
       if (subError) throw subError
 
+      // ── Failed payments ──────────────────────────────────────────────────
       const { data: failedPayments, error: payError } = await supabase
         .from('payment_transactions')
         .select(`
           id,
           payment_date,
           amount,
-          subscribers (customer_name),
+          subscribers!subscriber_id (customer_name),
           subscription_plans!plan_id (name)
         `)
         .eq('merchant_id', user.id)
@@ -183,37 +226,21 @@ export function NotificationBell() {
 
       if (payError) throw payError
 
-      const nextWeek = new Date()
-      nextWeek.setDate(nextWeek.getDate() + 7)
-
-      const { data: upcomingRenewals, error: renewError } = await supabase
-        .from('subscribers')
-        .select(`
-          id,
-          customer_name,
-          next_renewal_date,
-          subscription_plans!plan_id (name)
-        `)
-        .eq('merchant_id', user.id)
-        .eq('status', 'active')
-        .gte('next_renewal_date', new Date().toISOString())
-        .lte('next_renewal_date', nextWeek.toISOString())
-        .order('next_renewal_date', { ascending: true })
-        .limit(10)
-
-      if (renewError) throw renewError
-
       const allNotifications: Notification[] = []
 
-      subscribers?.forEach((sub: SubscriberRow) => {
+      // ── Build subscriber notifications ───────────────────────────────────
+      ;(subscribers as unknown as SubscriberRow[]).forEach((sub) => {
+        // PostgREST returns the joined plan as a single object.
+        const planName = sub.subscription_plans?.name ?? 'Unknown Plan'
         const isNew = new Date(sub.created_at).getTime() >= sevenDaysAgo.getTime()
-const planName = sub.subscription_plans[0]?.name || 'Unknown Plan'
+
         if (isNew && sub.status === 'active') {
           allNotifications.push({
             id: `new-${sub.id}`,
             type: 'new_subscriber',
-            message: `${sub.customer_name} subscribed to ${planName}`,
+            // timestamp = when the subscriber row was created (past, always)
             timestamp: sub.created_at,
+            message: `${sub.customer_name} subscribed to ${planName}`,
             read: false,
             customer_name: sub.customer_name,
             plan_name: planName,
@@ -222,8 +249,9 @@ const planName = sub.subscription_plans[0]?.name || 'Unknown Plan'
           allNotifications.push({
             id: `cancel-${sub.id}`,
             type: 'cancellation',
-            message: `${sub.customer_name} cancelled their ${planName} subscription`,
+            // timestamp = when the row was last updated to cancelled (past, always)
             timestamp: sub.updated_at,
+            message: `${sub.customer_name} cancelled their ${planName} subscription`,
             read: false,
             customer_name: sub.customer_name,
             plan_name: planName,
@@ -231,14 +259,16 @@ const planName = sub.subscription_plans[0]?.name || 'Unknown Plan'
         }
       })
 
-      failedPayments?.forEach((payment: FailedPaymentRow) => {
-const customerName = payment.subscribers[0]?.customer_name || 'Unknown Customer'
-        const planName = payment.subscription_plans[0]?.name || 'Unknown Plan'
+      // ── Build failed-payment notifications ───────────────────────────────
+      ;(failedPayments as unknown as FailedPaymentRow[]).forEach((payment) => {
+        const customerName = payment.subscribers?.customer_name ?? 'Unknown Customer'
+        const planName = payment.subscription_plans?.name ?? 'Unknown Plan'
         allNotifications.push({
           id: `failed-${payment.id}`,
           type: 'failed_payment',
-          message: `Payment of ₹${payment.amount.toFixed(2)} failed for ${customerName}`,
+          // timestamp = payment_date (past, always)
           timestamp: payment.payment_date,
+          message: `Payment of ₹${(payment.amount / 100).toFixed(2)} failed for ${customerName}`,
           read: false,
           customer_name: customerName,
           plan_name: planName,
@@ -246,26 +276,13 @@ const customerName = payment.subscribers[0]?.customer_name || 'Unknown Customer'
         })
       })
 
-      upcomingRenewals?.forEach((renewal: UpcomingRenewalRow) => {
-const planName = renewal.subscription_plans[0]?.name || 'Unknown Plan'
-        const daysUntil = Math.ceil(
-          (new Date(renewal.next_renewal_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-        )
-        allNotifications.push({
-          id: `renewal-${renewal.id}`,
-          type: 'upcoming_renewal',
-          message: `${renewal.customer_name}'s ${planName} renews in ${daysUntil} day${daysUntil !== 1 ? 's' : ''}`,
-          timestamp: renewal.next_renewal_date,
-          read: false,
-          customer_name: renewal.customer_name,
-          plan_name: planName,
-        })
-      })
-
+      // Sort newest first.
       allNotifications.sort(
         (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       )
 
+      // Apply dismissal and clear filters.
+      // Both filters now work correctly because every timestamp is in the past.
       const dismissedSet = new Set(stored.dismissedIds)
       const clearedAt = stored.clearedAt ? new Date(stored.clearedAt) : null
 
@@ -276,14 +293,13 @@ const planName = renewal.subscription_plans[0]?.name || 'Unknown Plan'
 
       setNotifications(visible)
     } catch {
-      // Notifications are non-critical - fail silently
+      // Notifications are non-critical — fail silently
     }
   }
 
   const handleBellClick = (): void => {
     const opening = !isOpen
     setIsOpen(opening)
-    // Mark all visible notifications as read when bell opens
     if (opening && user) {
       const newState: NotifPersistedState = {
         ...persisted,
@@ -318,31 +334,19 @@ const planName = renewal.subscription_plans[0]?.name || 'Unknown Plan'
 
   const getNotificationIcon = (type: Notification['type']): string => {
     switch (type) {
-      case 'new_subscriber':
-        return '🎉'
-      case 'cancellation':
-        return '❌'
-      case 'failed_payment':
-        return '⚠️'
-      case 'upcoming_renewal':
-        return '📅'
-      default:
-        return '🔔'
+      case 'new_subscriber': return '🎉'
+      case 'cancellation':   return '❌'
+      case 'failed_payment': return '⚠️'
+      default:               return '🔔'
     }
   }
 
   const getNotificationColor = (type: Notification['type']): string => {
     switch (type) {
-      case 'new_subscriber':
-        return 'border-green-400'
-      case 'cancellation':
-        return 'border-gray-300'
-      case 'failed_payment':
-        return 'border-red-400'
-      case 'upcoming_renewal':
-        return 'border-blue-400'
-      default:
-        return 'border-gray-300'
+      case 'new_subscriber': return 'border-green-400'
+      case 'cancellation':   return 'border-gray-300'
+      case 'failed_payment': return 'border-red-400'
+      default:               return 'border-gray-300'
     }
   }
 
@@ -354,10 +358,11 @@ const planName = renewal.subscription_plans[0]?.name || 'Unknown Plan'
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
 
-    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`
-    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`
-    if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    if (diffMins < 1)    return 'just now'
+    if (diffMins < 60)   return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`
+    if (diffHours < 24)  return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`
+    if (diffDays < 7)    return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`
+    return date.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })
   }
 
   return (
@@ -409,16 +414,14 @@ const planName = renewal.subscription_plans[0]?.name || 'Unknown Plan'
                   return (
                     <li
                       key={notification.id}
-                      className={`p-4 transition-colors cursor-pointer border-l-4 ${getNotificationColor(notification.type)} ${isUnread ? 'bg-blue-50/40 hover:bg-blue-50/60' : 'hover:bg-gray-50'}`}
+                      className={`p-4 transition-colors border-l-4 ${getNotificationColor(notification.type)} ${isUnread ? 'bg-blue-50/40 hover:bg-blue-50/60' : 'hover:bg-gray-50'}`}
                     >
                       <div className="flex items-start space-x-3">
                         <span className="text-xl shrink-0 mt-0.5">
                           {getNotificationIcon(notification.type)}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <p
-                            className={`text-sm ${isUnread ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'}`}
-                          >
+                          <p className={`text-sm ${isUnread ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'}`}>
                             {notification.message}
                           </p>
                           <p className="text-xs text-gray-400 mt-0.5">
