@@ -1226,7 +1226,7 @@ function AiAssistantTab(): JSX.Element {
             </svg>
           </div>
           <div>
-            <p className='text-sm font-semibold text-blue-900'>Business insights are powered by Google Gemini</p>
+            <p className='text-sm font-semibold text-blue-900'>Business insights are powered by GIWI AI</p>
             <p className='text-xs text-blue-700 mt-1'>
               Your aggregated business metrics (subscriber counts, revenue, churn rate) are shared with Google to generate insights.
               Individual subscriber names and emails are never sent to Google.
